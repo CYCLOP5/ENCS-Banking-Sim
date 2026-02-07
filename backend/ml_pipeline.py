@@ -316,6 +316,9 @@ def generate_dataset(
     if total > 0:
         print(f"  Class balance: {label_counts[1] / total * 100:.1f}% risky")
 
+    import sys
+    sys.stdout.flush()
+
     return dataset
 
 
@@ -376,21 +379,26 @@ def train_model(
     Train the GCN on the generated dataset.
     Uses class-weighted cross-entropy to handle label imbalance.
     """
+    import sys
     print("\n" + "=" * 60)
     print("GNN TRAINING")
     print("=" * 60)
+    sys.stdout.flush()
 
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"  Device: {device}")
+    sys.stdout.flush()
 
     n_train = int(len(dataset) * 0.8)
     train_data = dataset[:n_train]
     val_data = dataset[n_train:]
     print(f"  Train graphs: {len(train_data)}, Val graphs: {len(val_data)}")
 
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+    # num_workers=0: data is already in RAM — no I/O benefit from sub-processes,
+    # and spawning workers after the forkserver pool can deadlock.
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=0)
 
     all_labels = torch.cat([d.y for d in train_data])
     n_safe = (all_labels == 0).sum().float()
@@ -567,8 +575,11 @@ def main():
             n_runs=args.runs, n_workers=args.workers, verbose=True
         )
 
+        print(f"\n  Saving dataset to disk...")
+        import sys; sys.stdout.flush()
         torch.save(dataset, str(DATASET_PATH))
-        print(f"\n  Dataset saved: {DATASET_PATH}")
+        print(f"  Dataset saved: {DATASET_PATH}")
+        sys.stdout.flush()
         if args.generate_only:
             return
 
