@@ -306,13 +306,29 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     },
     stopPhysics() {
       const fg = fgRef.current;
-      if (!fg) return;
+      // Defensive check: ensure graph and internal D3 simulation are initialized
+      if (!fg || typeof fg.d3Force !== 'function') return;
+
       try {
-        // Gracefully freeze the simulation via cooldownTime rather than
-        // zeroing individual forces (which can leave state.layout undefined).
-        fg.d3AlphaTarget(0);
-        fg.cooldownTime(0);               // engine checks this before layout.tick()
-        setTimeout(() => fg.cooldownTime(10000), 100); // restore for future use
+        // PRIORITY: Stop the tick loop immediately by zeroing cooldown.
+        // This is a safe property set in most versions of force-graph.
+        if (typeof fg.cooldownTime === 'function') {
+           fg.cooldownTime(0); 
+        }
+
+        // Then attempt to zero alpha target (which interacts with layout).
+        // Wrapping this separately because accessing layout can throw if undefined.
+        if (typeof fg.d3AlphaTarget === 'function') {
+           try {
+              fg.d3AlphaTarget(0);
+           } catch (e) { /* ignore layout missing error */ }
+        }
+
+        setTimeout(() => {
+            if (fgRef.current && typeof fgRef.current.cooldownTime === 'function') {
+               fgRef.current.cooldownTime(10000);
+            }
+        }, 100); 
       } catch (_) { /* layout not ready yet — safe to ignore */ }
     },
     pauseRendering()  { fgRef.current?.pauseAnimation(); },
@@ -348,30 +364,46 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
      ═══════════════════════════════════════════════════════════════════════ */
   useEffect(() => {
     const fg = fgRef.current;
+    
+    // Robust check: Ensure fg exists, is mounted, and has nodes to render
     if (!fg || !mounted || enriched.nodes.length === 0) return;
 
-    // Charge: strong repulsion to spread nodes apart
-    const charge = fg.d3Force('charge');
-    if (charge) {
-      charge.strength(CHARGE_STRENGTH);
-      charge.distanceMax(CHARGE_MAX_DIST);
-    }
+    // Use a small timeout to allow internal graph initialization
+    const timer = setTimeout(() => {
+      const fgInstance = fgRef.current;
+      if (!fgInstance || typeof fgInstance.d3ReheatSimulation !== 'function') return;
 
-    // Center: gentle pull to keep graph near origin
-    const center = fg.d3Force('center');
-    if (center) center.strength(CENTER_STRENGTH);
+      try {
+        // Charge: strong repulsion to spread nodes apart
+        const charge = fgInstance.d3Force('charge');
+        if (charge) {
+          charge.strength(CHARGE_STRENGTH);
+          charge.distanceMax(CHARGE_MAX_DIST);
+        }
 
-    // Collision: prevent node overlap
-    fg.d3Force('collide', forceCollide((node) => {
-      const r = (node.val || 1) * 1.5 + COLLISION_PAD;
-      return r;
-    }).iterations(2));
+        // Center: gentle pull to keep graph near origin
+        const center = fgInstance.d3Force('center');
+        if (center) center.strength(CENTER_STRENGTH);
 
-    // Reheat so new forces take effect
-    fg.d3ReheatSimulation();
+        // Collision: prevent node overlap
+        fgInstance.d3Force('collide', forceCollide((node) => {
+          const r = (node.val || 1) * 1.5 + COLLISION_PAD;
+          return r;
+        }).iterations(2));
 
-    // Zoom to fit after layout settles
-    const timer = setTimeout(() => fg.zoomToFit(600, 80), 1200);
+        // Reheat so new forces take effect
+        fgInstance.d3ReheatSimulation();
+      } catch (err) {
+        console.warn("Simulation reheat skipped:", err);
+      }
+      
+      // Zoom to fit after layout settles
+      setTimeout(() => {
+          if (fgRef.current) fgRef.current.zoomToFit(600, 80);
+      }, 1200);
+
+    }, 10);
+
     return () => clearTimeout(timer);
   }, [mounted, enriched]);
 
