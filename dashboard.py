@@ -15,7 +15,7 @@ st.markdown("""
     .stApp { background-color: #0e1117; }
     .metric-card {
         background: linear-gradient(135deg, 
-#262b3d 100%);
+
         border: 1px solid 
         border-radius: 10px;
         padding: 20px;
@@ -176,18 +176,62 @@ def main():
         max_iter = st.number_input("Max Iterations", value=100, min_value=10, max_value=500)
         tolerance = st.number_input("Convergence Tolerance", value=1e-5, format="%.0e")
         distress_thresh = st.slider("Distress Threshold", 0.0, 1.0, 0.95)
+
     st.sidebar.markdown("---")
-    run_button = st.sidebar.button(" RUN SIMULATION", use_container_width=True, type="primary")
+    st.sidebar.markdown("## \U0001F9E0 Rust Intraday Engine")
+    rust_badge = "\u26a1 Rust" if sim.RUST_AVAILABLE else "\U0001f40d Python fallback"
+    st.sidebar.caption(f"Backend: {rust_badge}")
+    intraday_mode = st.sidebar.checkbox("Enable Intraday Mode", value=False,
+                                         help="Simulate discrete time steps with exponential fire sales")
+
+    if intraday_mode:
+        n_steps = st.sidebar.slider("Time Steps", min_value=1, max_value=50, value=10,
+                                     help="Number of discrete intraday steps")
+        intra_sigma = st.sidebar.slider("Market Uncertainty (\u03c3)",
+                                         min_value=0.01, max_value=0.30, value=0.05, step=0.01,
+                                         key="intra_sigma",
+                                         help="Gaussian noise on solvency signals")
+        intra_panic = st.sidebar.slider("Panic Threshold",
+                                         min_value=0.0, max_value=0.50, value=0.10, step=0.01,
+                                         key="intra_panic",
+                                         help="Signal level below which creditors run")
+        intra_alpha = st.sidebar.slider("Fire-Sale \u03b1 (Exponential Decay)",
+                                         min_value=0.0, max_value=0.05, value=0.005, step=0.001,
+                                         format="%.3f",
+                                         help="P_new = P_old * exp(-\u03b1 * Volume)")
+    else:
+        n_steps = 10
+        intra_sigma = 0.05
+        intra_panic = 0.10
+        intra_alpha = 0.005
+
+    st.sidebar.markdown("---")
+    run_button = st.sidebar.button("\U0001f680 RUN SIMULATION", use_container_width=True, type="primary")
     if run_button:
-        with st.spinner("Running Eisenberg-Noe clearing..."):
-            results = sim.run_scenario(
-                initial_state, df, trigger_idx, severity,
-                max_iterations=max_iter,
-                convergence_threshold=tolerance,
-                distress_threshold=distress_thresh
-            )
-            results['bank_names'] = df['bank_name'].tolist()
-            st.session_state.simulation_results = results
+        if intraday_mode:
+            with st.spinner("Running Intraday Simulation..."):
+                results = sim.run_rust_intraday(
+                    initial_state, df, trigger_idx, severity,
+                    n_steps=n_steps,
+                    uncertainty_sigma=intra_sigma,
+                    panic_threshold=intra_panic,
+                    alpha=intra_alpha,
+                    max_iterations=max_iter,
+                    convergence_threshold=tolerance,
+                    distress_threshold=distress_thresh
+                )
+                results['bank_names'] = df['bank_name'].tolist()
+                st.session_state.simulation_results = results
+        else:
+            with st.spinner("Running Eisenberg-Noe clearing..."):
+                results = sim.run_scenario(
+                    initial_state, df, trigger_idx, severity,
+                    max_iterations=max_iter,
+                    convergence_threshold=tolerance,
+                    distress_threshold=distress_thresh
+                )
+                results['bank_names'] = df['bank_name'].tolist()
+                st.session_state.simulation_results = results
     results = st.session_state.simulation_results
     st.markdown("---")
     col1, col2, col3, col4 = st.columns(4)
@@ -284,7 +328,66 @@ def main():
                 **Defaults - US:** {defaults_us}  
                 **Defaults - EU:** {defaults_eu}  
                 """)
+
+    if results and results.get('price_timeline'):
+        st.markdown("---")
+        st.markdown("### \u23f1 Intraday Contagion Timeline")
+        tl_cols = st.columns(3)
+
+        steps = list(range(1, len(results['price_timeline']) + 1))
+
+        with tl_cols[0]:
+            fig_price = go.Figure()
+            fig_price.add_trace(go.Scatter(
+                x=steps, y=results['price_timeline'],
+                mode='lines+markers', name='Asset Price',
+                line=dict(color='#ff4444', width=3),
+                fill='tozeroy', fillcolor='rgba(255,68,68,0.15)'
+            ))
+            fig_price.update_layout(
+                title="Asset Price (Exponential Decay)",
+                xaxis_title="Time Step", yaxis_title="Price Multiplier",
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                height=280, margin=dict(l=40, r=10, t=40, b=30),
+                yaxis=dict(range=[0, 1.05])
+            )
+            st.plotly_chart(fig_price, use_container_width=True)
+
+        with tl_cols[1]:
+            fig_def = go.Figure()
+            fig_def.add_trace(go.Bar(
+                x=steps, y=results['defaults_timeline'],
+                name='Defaults', marker_color='#ff4444'
+            ))
+            fig_def.add_trace(go.Bar(
+                x=steps, y=results['distressed_timeline'],
+                name='Distressed', marker_color='#ffaa00'
+            ))
+            fig_def.update_layout(
+                title="Defaults & Distressed per Step",
+                xaxis_title="Time Step", yaxis_title="Count",
+                barmode='stack',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                height=280, margin=dict(l=40, r=10, t=40, b=30)
+            )
+            st.plotly_chart(fig_def, use_container_width=True)
+
+        with tl_cols[2]:
+            fig_grid = go.Figure()
+            fig_grid.add_trace(go.Scatter(
+                x=steps, y=results['gridlock_timeline'],
+                mode='lines+markers', name='Failed Payments',
+                line=dict(color='#ffaa00', width=3)
+            ))
+            fig_grid.update_layout(
+                title="Liquidity Gridlock (Failed Payments)",
+                xaxis_title="Time Step", yaxis_title="Failed Payments",
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                height=280, margin=dict(l=40, r=10, t=40, b=30)
+            )
+            st.plotly_chart(fig_grid, use_container_width=True)
+
     st.markdown("---")
-    st.caption("ENCS Systemic Risk Engine | Layer 3 Visualization | Eisenberg-Noe Clearing Model")
+    st.caption("ENCS Systemic Risk Engine | Hybrid Rust/Python Architecture | Eisenberg-Noe + Intraday Fire Sales")
 if __name__ == "__main__":
     main()

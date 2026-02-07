@@ -5,6 +5,13 @@ from pathlib import Path
 import argparse
 import warnings
 warnings.filterwarnings('ignore')
+
+try:
+    import encs_rust
+    RUST_AVAILABLE = True
+except ImportError:
+    RUST_AVAILABLE = False
+
 BASE_PATH = Path(__file__).parent / "data"
 OUTPUT_DIR = BASE_PATH / "output"
 DEFAULT_MAX_ITERATIONS = 100
@@ -161,7 +168,6 @@ def run_scenario(state: dict, df: pd.DataFrame, trigger_idx: int,
 
     equity_ratio = np.where(initial_equity > 0, final_equity / initial_equity, 1.0)
 
-    # Use explicit dtype to avoid string truncation ('Safe'=4 chars, 'Distressed'=10 chars)
     status = np.array(['Safe'] * n, dtype='<U10')
     status[final_equity < 0] = 'Default'  
 
@@ -189,6 +195,216 @@ def run_scenario(state: dict, df: pd.DataFrame, trigger_idx: int,
         'n_distressed': n_distressed,
         'equity_loss': total_lost
     }
+def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
+                      loss_severity: float = 1.0,
+                      n_steps: int = 10,
+                      uncertainty_sigma: float = 0.05,
+                      panic_threshold: float = 0.10,
+                      alpha: float = 0.005,
+                      max_iterations: int = DEFAULT_MAX_ITERATIONS,
+                      convergence_threshold: float = DEFAULT_CONVERGENCE_THRESHOLD,
+                      distress_threshold: float = DEFAULT_DISTRESS_THRESHOLD) -> dict:
+    """
+    LAYER 4 — RUST INTRADAY ENGINE: Exponential fire sales + discrete time steps.
+
+    If the Rust extension (encs_rust) is available, delegates the heavy computation
+    to compiled Rust code.  Otherwise falls back to an equivalent pure-Python loop.
+
+    Parameters:
+        n_steps:            Number of discrete intraday time steps.
+        uncertainty_sigma:  Gaussian noise on solvency signals.
+        panic_threshold:    Signal level below which creditors run.
+        alpha:              Exponential fire-sale decay constant.
+    """
+    print("\n" + "=" * 60)
+    print("LAYER 4: INTRADAY SIMULATION" + (" (RUST)" if RUST_AVAILABLE else " (Python fallback)"))
+    print("=" * 60)
+
+    W = state['W'].copy()
+    external_assets = state['external_assets'].copy()
+    total_liabilities = df['total_liabilities'].values.copy()
+    total_assets = df['total_assets'].values.copy()
+    n = len(external_assets)
+
+    trigger_name = (str(df.iloc[trigger_idx]['bank_name'])[:40]
+                    if pd.notna(df.iloc[trigger_idx]['bank_name']) else 'Unknown')
+
+    print(f"  Trigger:       {trigger_name}")
+    print(f"  Severity:      {loss_severity*100:.0f}%")
+    print(f"  Time Steps:    {n_steps}")
+    print(f"  σ (noise):     {uncertainty_sigma}")
+    print(f"  Panic thresh:  {panic_threshold}")
+    print(f"  α (fire-sale): {alpha}")
+
+    if RUST_AVAILABLE:
+        print("  Delegating to Rust core...")
+        result_dict = encs_rust.run_full_simulation(
+            W.astype(np.float64),
+            external_assets.astype(np.float64),
+            total_liabilities.astype(np.float64),
+            total_assets.astype(np.float64),
+            trigger_idx,
+            loss_severity,
+            n_steps=n_steps,
+            sigma=uncertainty_sigma,
+            panic_threshold=panic_threshold,
+            alpha=alpha,
+            max_clearing_iter=max_iterations,
+            convergence_tol=convergence_threshold,
+            distress_threshold=distress_threshold,
+        )
+
+        results = {
+            'trigger_idx': trigger_idx,
+            'trigger_name': trigger_name,
+            'loss_severity': loss_severity,
+            'rust_engine': True,
+            'n_steps': result_dict['n_steps'],
+            'final_asset_price': result_dict['final_asset_price'],
+            'n_defaults': result_dict['n_defaults'],
+            'n_distressed': result_dict['n_distressed'],
+            'equity_loss': result_dict['equity_loss'],
+            'status': np.array(result_dict['status'], dtype='<U10'),
+            'final_equity': np.array(result_dict['final_equity']),
+            'initial_equity': np.array(result_dict['initial_equity']),
+            'payments': np.array(result_dict['payments']),
+
+            'price_timeline': result_dict['price_timeline'],
+            'defaults_timeline': result_dict['defaults_timeline'],
+            'distressed_timeline': result_dict['distressed_timeline'],
+            'withdrawn_timeline': result_dict['withdrawn_timeline'],
+            'gridlock_timeline': result_dict['gridlock_timeline'],
+            'equity_loss_timeline': result_dict['equity_loss_timeline'],
+        }
+
+    else:
+        print("  Running pure-Python fallback (build Rust for 10-50× speedup)...")
+
+        shock = external_assets[trigger_idx] * loss_severity
+        external_assets[trigger_idx] -= shock
+        total_assets[trigger_idx] -= shock
+
+        asset_price = 1.0
+        price_timeline = []
+        defaults_timeline = []
+        distressed_timeline = []
+        withdrawn_timeline = []
+        gridlock_timeline = []
+        equity_loss_timeline = []
+
+        for t in range(1, n_steps + 1):
+
+            solvency = np.where(total_assets > 0,
+                                (total_assets - total_liabilities) / total_assets, 0.0)
+            np.random.seed(42 + t)
+            noise = np.random.normal(0.0, uncertainty_sigma, size=(n, n))
+            signals = solvency[np.newaxis, :] + noise
+
+            run_matrix = signals < panic_threshold
+            total_withdrawn_per_bank = np.zeros(n)
+            total_received_per_bank = np.zeros(n)   # cash runners receive
+            total_withdrawn_global = 0.0
+
+            for i in range(n):
+                for j in range(n):
+                    if i == j:
+                        continue
+                    if run_matrix[j, i] and W[i, j] > 0:
+                        withdrawn = W[i, j]
+                        total_withdrawn_per_bank[i] += withdrawn   # i must pay
+                        total_received_per_bank[j] += withdrawn    # j gets cash
+                        total_withdrawn_global += withdrawn
+                        W[i, j] = 0.0
+
+            volume_norm = total_withdrawn_global / 1e12
+            asset_price *= np.exp(-alpha * volume_norm)
+
+            for i in range(n):
+                # Credit cash received from running on others
+                external_assets[i] += total_received_per_bank[i]
+                # Debit fire-sale cost for being run on
+                if total_withdrawn_per_bank[i] > 0:
+                    fire_cost = total_withdrawn_per_bank[i] / asset_price
+                    external_assets[i] = max(external_assets[i] - fire_cost, 0.0)
+                # Reduce liabilities — paid-off obligations no longer owed
+                total_liabilities[i] -= total_withdrawn_per_bank[i]
+                # Mark-to-market
+                total_assets[i] = external_assets[i] * asset_price + W[:, i].sum()
+
+            equity = total_assets - total_liabilities
+
+            obligations = W.sum(axis=1)
+            pi = np.zeros_like(W)
+            for i in range(n):
+                if obligations[i] > 0:
+                    pi[i, :] = W[i, :] / obligations[i]
+
+            payments = obligations.copy()
+            for _ in range(max_iterations):
+                old_p = payments.copy()
+                inflows = pi.T @ payments
+                wealth = external_assets + inflows
+                payments = np.minimum(obligations, np.maximum(0, wealth))
+                if np.abs(payments - old_p).sum() < convergence_threshold:
+                    break
+
+            failed = int(np.sum((obligations > 1e-6) & ((payments / np.maximum(obligations, 1e-12)) < 0.999)))
+
+            n_def = int(np.sum(equity < 0))
+            equity_ratio = np.where(equity > 0, equity / np.maximum(total_assets - total_liabilities, 1e-12), 1.0)
+            n_dis = int(np.sum((equity_ratio < distress_threshold) & (equity >= 0)))
+            eq_loss = float(np.sum(np.abs(equity[equity < 0])))
+
+            price_timeline.append(float(asset_price))
+            defaults_timeline.append(n_def)
+            distressed_timeline.append(n_dis)
+            withdrawn_timeline.append(float(total_withdrawn_global))
+            gridlock_timeline.append(failed)
+            equity_loss_timeline.append(eq_loss)
+
+        initial_equity = state['equity'].copy()
+        final_equity = total_assets - total_liabilities
+        equity_ratio_final = np.where(initial_equity > 0, final_equity / initial_equity, 1.0)
+        status = np.array(['Safe'] * n, dtype='<U10')
+        status[final_equity < 0] = 'Default'
+        status[(equity_ratio_final < distress_threshold) & (final_equity >= 0)] = 'Distressed'
+
+        n_defaults = int((status == 'Default').sum())
+        n_distressed = int((status == 'Distressed').sum())
+        total_lost = float(np.sum(np.maximum(initial_equity - final_equity, 0)))
+
+        results = {
+            'trigger_idx': trigger_idx,
+            'trigger_name': trigger_name,
+            'loss_severity': loss_severity,
+            'rust_engine': False,
+            'n_steps': n_steps,
+            'final_asset_price': asset_price,
+            'n_defaults': n_defaults,
+            'n_distressed': n_distressed,
+            'equity_loss': total_lost,
+            'status': status,
+            'final_equity': final_equity,
+            'initial_equity': initial_equity,
+            'payments': payments,
+            'price_timeline': price_timeline,
+            'defaults_timeline': defaults_timeline,
+            'distressed_timeline': distressed_timeline,
+            'withdrawn_timeline': withdrawn_timeline,
+            'gridlock_timeline': gridlock_timeline,
+            'equity_loss_timeline': equity_loss_timeline,
+        }
+
+    print(f"\n  === RESULTS ===")
+    print(f"  Engine:       {'Rust' if results.get('rust_engine') else 'Python'}")
+    print(f"  Time Steps:   {results['n_steps']}")
+    print(f"  Final Price:  {results['final_asset_price']:.4f}")
+    print(f"  Defaults:     {results['n_defaults']}")
+    print(f"  Distressed:   {results['n_distressed']}")
+    print(f"  Capital Lost: ${results['equity_loss'] / 1e12:.2f}T")
+
+    return results
+
 def find_most_dangerous(W_dense: np.ndarray, df: pd.DataFrame) -> int:
     """Find most dangerous node by out-strength (total obligations)."""
     print("\n" + "=" * 60)
