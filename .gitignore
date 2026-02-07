@@ -14,7 +14,7 @@ data/*
 
 # Ignore zips completely
 zips/
-
+data/output/gnn_dataset.pt
 # Distribution / packaging
 .Python
 build/

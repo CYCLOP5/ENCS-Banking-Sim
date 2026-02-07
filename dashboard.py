@@ -5,6 +5,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import networkx as nx
 import simulation_engine as sim
+from pathlib import Path
+
+try:
+    import torch
+    from ml_pipeline import load_trained_model, predict_risk, build_node_features, build_edge_index
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+
+GNN_MODEL_PATH = Path(__file__).parent / "gnn_model.pth"
 st.set_page_config(
     page_title="ENCS Systemic Risk Engine",
     layout="wide",
@@ -74,16 +84,21 @@ def create_3d_network(df, status_array=None, layout_df=None, coords=None):
             x_nodes.append(x)
             y_nodes.append(y)
             z_nodes.append(z)
+
+            is_ccp = (row.get('region') == 'Global')
             if status_array is not None and idx < len(status_array):
                 status = status_array[idx]
-                if status == 'Default':
+                if is_ccp:
+                    colors.append('#FFD700')  
+
+                elif status == 'Default':
                     colors.append('#ff4444')
                 elif status == 'Distressed':
                     colors.append('#ffaa00')
                 else:
                     colors.append('#00ff88')
             else:
-                colors.append('#00ff88')  
+                colors.append('#FFD700' if is_ccp else '#00ff88')  
             size = np.log10(max(row['total_assets'], 1e6)) * 2
             sizes.append(size)
             hover_texts.append(
@@ -147,12 +162,43 @@ def main():
     st.markdown("#  ENCS Systemic Risk Engine")
     st.markdown("### Eisenberg-Noe Contagion Simulation Dashboard")
     with st.spinner("Loading network data..."):
-        W_dense, df = load_network_data()
-        initial_state = compute_initial_state(W_dense, df)
-    if 'network_coords' not in st.session_state:
+        W_dense_base, df_base = load_network_data()
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("## \U0001f3e6 Market Structure")
+    clearing_model = st.sidebar.radio(
+        "Clearing Model",
+        ["Bilateral (OTC)", "Central Cleared (CCP)"],
+        index=0,
+        help="Choose bilateral OTC or hub-and-spoke CCP topology"
+    )
+    if clearing_model == "Central Cleared (CCP)":
+        clearing_rate = st.sidebar.slider(
+            "Cleared Volume %", min_value=0, max_value=100, value=50,
+            help="Percentage of interbank edges routed through the CCP"
+        ) / 100.0
+        default_fund_pct = st.sidebar.slider(
+            "CCP Default Fund %", min_value=1, max_value=25, value=5,
+            help="CCP equity as percentage of total cleared risk"
+        ) / 100.0
+        W_dense, df = sim.apply_central_clearing(
+            W_dense_base, df_base, clearing_rate=clearing_rate,
+            default_fund_ratio=default_fund_pct
+        )
+        st.sidebar.success(
+            f"CCP active — {clearing_rate*100:.0f}% cleared, "
+            f"{default_fund_pct*100:.0f}% default fund"
+        )
+    else:
+        W_dense, df = W_dense_base, df_base
+
+    initial_state = sim.compute_state_variables(W_dense, df)
+
+    if 'network_coords' not in st.session_state or st.session_state.get('_ccp_mode') != clearing_model:
         coords, layout_df = generate_network_layout(df)
         st.session_state.network_coords = coords
         st.session_state.layout_df = layout_df
+        st.session_state._ccp_mode = clearing_model
     if 'simulation_results' not in st.session_state:
         st.session_state.simulation_results = None
     st.sidebar.markdown("##  Stress Test Controls")
@@ -199,14 +245,36 @@ def main():
                                          min_value=0.0, max_value=0.05, value=0.005, step=0.001,
                                          format="%.3f",
                                          help="P_new = P_old * exp(-\u03b1 * Volume)")
+        intra_margin = st.sidebar.slider("Margin Sensitivity",
+                                          min_value=0.0, max_value=5.0, value=1.0, step=0.1,
+                                          help="Multiplier on derivative margin calls: MC_i = Deriv_i × (1-P) × Sensitivity")
     else:
         n_steps = 10
         intra_sigma = 0.05
         intra_panic = 0.10
         intra_alpha = 0.005
+        intra_margin = 1.0
 
     st.sidebar.markdown("---")
     run_button = st.sidebar.button("\U0001f680 RUN SIMULATION", use_container_width=True, type="primary")
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("## \U0001f916 AI Risk Predictor")
+    if not ML_AVAILABLE:
+        st.sidebar.warning("torch / ml_pipeline not available")
+    elif not GNN_MODEL_PATH.exists():
+        st.sidebar.info("No trained model found. Run:\n`python ml_pipeline.py`")
+    else:
+        st.sidebar.caption("GCN model trained on Monte Carlo simulations")
+        predict_button = st.sidebar.button("\U0001f52e PREDICT RISK", use_container_width=True)
+        if predict_button:
+            with st.spinner("Running GNN inference..."):
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                model = load_trained_model(str(GNN_MODEL_PATH), in_channels=7, device=device)
+                model = model.to(device)
+                ai_pred = predict_risk(model, W_dense, df, device=device)
+                st.session_state.ai_predictions = ai_pred
+                st.sidebar.success(f"Predicted {(ai_pred['risk_labels']=='High Risk').sum()} high-risk nodes")
     if run_button:
         if intraday_mode:
             with st.spinner("Running Intraday Simulation..."):
@@ -218,7 +286,8 @@ def main():
                     alpha=intra_alpha,
                     max_iterations=max_iter,
                     convergence_threshold=tolerance,
-                    distress_threshold=distress_thresh
+                    distress_threshold=distress_thresh,
+                    margin_sensitivity=intra_margin
                 )
                 results['bank_names'] = df['bank_name'].tolist()
                 st.session_state.simulation_results = results
@@ -282,7 +351,7 @@ def main():
         )
         st.plotly_chart(fig, use_container_width=True)
         st.markdown("""
-        🟢 **Safe** | 🟠 **Distressed** | 🔴 **Default**
+        🟢 **Safe** | 🟠 **Distressed** | 🔴 **Default** | 🟡 **CCP**
         """)
     with col_right:
         st.markdown("###  Top 10 Casualties")
@@ -332,7 +401,7 @@ def main():
     if results and results.get('price_timeline'):
         st.markdown("---")
         st.markdown("### \u23f1 Intraday Contagion Timeline")
-        tl_cols = st.columns(3)
+        tl_cols = st.columns(4)
 
         steps = list(range(1, len(results['price_timeline']) + 1))
 
@@ -387,7 +456,144 @@ def main():
             )
             st.plotly_chart(fig_grid, use_container_width=True)
 
+        with tl_cols[3]:
+            margin_tl = results.get('margin_calls_timeline', [0] * len(steps))
+            fig_margin = go.Figure()
+            fig_margin.add_trace(go.Scatter(
+                x=steps, y=[m / 1e9 for m in margin_tl],
+                mode='lines+markers', name='Margin Calls',
+                line=dict(color='#ff66ff', width=3),
+                fill='tozeroy', fillcolor='rgba(255,102,255,0.15)'
+            ))
+            fig_margin.update_layout(
+                title="Margin Call Spirals ($B)",
+                xaxis_title="Time Step", yaxis_title="Margin Calls ($B)",
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                height=280, margin=dict(l=40, r=10, t=40, b=30)
+            )
+            st.plotly_chart(fig_margin, use_container_width=True)
+
+    ai_pred = st.session_state.get('ai_predictions')
+    if ai_pred is not None:
+        st.markdown("---")
+        st.markdown("### \U0001f916 AI Risk Prediction (GNN)")
+
+        ai_col1, ai_col2 = st.columns([2, 1])
+
+        with ai_col1:
+
+            risk_probs = ai_pred['risk_probs']
+            layout_df = st.session_state.layout_df
+            coords = st.session_state.network_coords
+
+            x_nodes, y_nodes, z_nodes = [], [], []
+            colors_ai, sizes_ai, hover_ai = [], [], []
+
+            for idx, row in layout_df.iterrows():
+                if idx in coords:
+                    x, y, z = coords[idx]
+                    x_nodes.append(x)
+                    y_nodes.append(y)
+                    z_nodes.append(z)
+
+                    p = risk_probs[idx] if idx < len(risk_probs) else 0.0
+                    colors_ai.append(p)
+
+                    size = np.log10(max(row['total_assets'], 1e6)) * 2
+                    sizes_ai.append(size)
+
+                    hover_ai.append(
+                        f"<b>{row['bank_name'][:40]}</b><br>"
+                        f"P(Risk): {p:.2%}<br>"
+                        f"Region: {row['region']}<br>"
+                        f"Assets: ${row['total_assets']/1e9:.1f}B"
+                    )
+
+            fig_ai = go.Figure()
+            fig_ai.add_trace(go.Scatter3d(
+                x=x_nodes, y=y_nodes, z=z_nodes,
+                mode='markers',
+                marker=dict(
+                    size=sizes_ai,
+                    color=colors_ai,
+                    colorscale=[[0, '#00ff88'], [0.5, '#ffaa00'], [1.0, '#ff4444']],
+                    cmin=0, cmax=1,
+                    colorbar=dict(title='P(Risk)', tickformat='.0%'),
+                    opacity=0.85,
+                    line=dict(width=1, color='#444')
+                ),
+                text=hover_ai,
+                hoverinfo='text',
+                name='AI Risk'
+            ))
+            fig_ai.update_layout(
+                scene=dict(
+                    xaxis=dict(visible=False),
+                    yaxis=dict(visible=False),
+                    zaxis=dict(visible=False),
+                    bgcolor='rgba(0,0,0,0)'
+                ),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                margin=dict(l=0, r=0, t=0, b=0),
+                height=500,
+                showlegend=False
+            )
+            st.plotly_chart(fig_ai, use_container_width=True)
+            st.markdown("\U0001f7e2 **Low Risk** → \U0001f7e0 **Medium** → \U0001f534 **High Risk** (continuous scale)")
+
+        with ai_col2:
+            st.markdown("#### Top 15 Riskiest Banks")
+            top_n = 15
+            sorted_idx = np.argsort(risk_probs)[::-1][:top_n]
+            risk_df = pd.DataFrame({
+                'Bank': [df.iloc[i]['bank_name'][:30] for i in sorted_idx],
+                'Region': [df.iloc[i]['region'] for i in sorted_idx],
+                'P(Risk)': [f"{risk_probs[i]:.1%}" for i in sorted_idx],
+            })
+            st.dataframe(risk_df, use_container_width=True, hide_index=True)
+
+            if results is not None:
+                st.markdown("#### AI vs Simulation")
+                sim_risky = np.isin(results['status'], ['Default', 'Distressed']).astype(int)
+                ai_risky = (risk_probs >= 0.5).astype(int)
+                min_len = min(len(sim_risky), len(ai_risky))
+                sim_risky = sim_risky[:min_len]
+                ai_risky = ai_risky[:min_len]
+
+                tp = int(((ai_risky == 1) & (sim_risky == 1)).sum())
+                tn = int(((ai_risky == 0) & (sim_risky == 0)).sum())
+                fp = int(((ai_risky == 1) & (sim_risky == 0)).sum())
+                fn = int(((ai_risky == 0) & (sim_risky == 1)).sum())
+                accuracy = (tp + tn) / max(tp + tn + fp + fn, 1)
+                precision = tp / max(tp + fp, 1)
+                recall = tp / max(tp + fn, 1)
+
+                st.metric("Accuracy", f"{accuracy:.1%}")
+                cm_col1, cm_col2 = st.columns(2)
+                cm_col1.metric("Precision", f"{precision:.1%}")
+                cm_col2.metric("Recall", f"{recall:.1%}")
+
+                fig_cm = go.Figure(data=go.Heatmap(
+                    z=[[tn, fp], [fn, tp]],
+                    x=['Pred Safe', 'Pred Risky'],
+                    y=['Actual Safe', 'Actual Risky'],
+                    texttemplate='%{z:,}',
+                    colorscale=[[0, '#1a1a2e'], [1, '#ff4444']],
+                    showscale=False,
+                ))
+                fig_cm.update_layout(
+                    title='Confusion Matrix',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    height=250,
+                    margin=dict(l=10, r=10, t=40, b=10),
+                )
+                st.plotly_chart(fig_cm, use_container_width=True)
+            else:
+                st.info("Run a simulation to compare AI vs actual results")
+
     st.markdown("---")
-    st.caption("ENCS Systemic Risk Engine | Hybrid Rust/Python Architecture | Eisenberg-Noe + Intraday Fire Sales")
+    st.caption("ENCS Systemic Risk Engine | Hybrid Rust/Python Architecture | Eisenberg-Noe + Intraday Fire Sales + GNN Risk Predictor")
 if __name__ == "__main__":
     main()

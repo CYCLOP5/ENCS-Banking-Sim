@@ -71,6 +71,94 @@ def rescale_matrix_to_dollars(W: sparse.csr_matrix, df: pd.DataFrame) -> np.ndar
     print(f"  Total Interbank Obligations: ${new_row_sums.sum() / 1e12:.2f}T")
     print(f"  Avg Obligation per bank: ${new_row_sums.mean() / 1e9:.2f}B")
     return W_dense
+def apply_central_clearing(W_dense: np.ndarray, df: pd.DataFrame,
+                           clearing_rate: float = 0.5,
+                           default_fund_ratio: float = 0.05) -> tuple:
+    """
+    LAYER 5 — CENTRAL CLEARING INFRASTRUCTURE
+    Transform bilateral OTC topology into hub-and-spoke CCP topology.
+
+    For each edge A->B with weight w:
+      - With probability `clearing_rate`: remove A->B, add A->CCP and CCP->B
+      - Otherwise: keep A->B as-is (bilateral residual)
+
+    The CCP node receives a Default Fund = total_risk × default_fund_ratio.
+
+    Returns:
+        (W_new, df_new) — expanded matrix (N+1 × N+1) and dataframe with CCP row.
+    """
+    print("\n" + "=" * 60)
+    print("APPLYING CENTRAL CLEARING (CCP TOPOLOGY)")
+    print("=" * 60)
+
+    n = W_dense.shape[0]
+    ccp_idx = n  
+
+    W_new = np.zeros((n + 1, n + 1), dtype=np.float64)
+
+    rng = np.random.RandomState(seed=123)  
+
+    cleared_volume = 0.0
+    bilateral_volume = 0.0
+    edges_cleared = 0
+    edges_bilateral = 0
+
+    for i in range(n):
+        for j in range(n):
+            w = W_dense[i, j]
+            if w <= 0 or i == j:
+                continue
+            if rng.random() < clearing_rate:
+
+                W_new[i, ccp_idx] += w      
+
+                W_new[ccp_idx, j] += w       
+
+                cleared_volume += w
+                edges_cleared += 1
+            else:
+
+                W_new[i, j] = w
+                bilateral_volume += w
+                edges_bilateral += 1
+
+    ccp_liabilities = W_new[ccp_idx, :].sum()  
+
+    ccp_assets = W_new[:, ccp_idx].sum()        
+
+    ccp_total_risk = max(ccp_liabilities, ccp_assets)
+    ccp_equity = ccp_total_risk * default_fund_ratio
+    ccp_total_assets = ccp_assets + ccp_equity  
+
+    ccp_total_liabilities = ccp_liabilities
+
+    ccp_row = {col: 0.0 for col in df.columns}
+    ccp_row.update({
+        'bank_id': 'CCP_GLOBAL',
+        'bank_name': '⚡ Global CCP',
+        'region': 'Global',
+        'NSA': 'CCP',
+        'total_assets': ccp_total_assets,
+        'total_liabilities': ccp_total_liabilities,
+        'equity_capital': ccp_equity,
+        'leverage_ratio': 0.0,
+    })
+    df_new = pd.concat([df, pd.DataFrame([ccp_row])], ignore_index=True)
+
+    df_new.loc[ccp_idx, 'interbank_assets'] = ccp_assets
+    df_new.loc[ccp_idx, 'interbank_liabilities'] = ccp_liabilities
+
+    total_volume = cleared_volume + bilateral_volume
+    print(f"  Original banks: {n}")
+    print(f"  CCP node added at index: {ccp_idx}")
+    print(f"  Edges cleared:  {edges_cleared} (${cleared_volume/1e12:.2f}T)")
+    print(f"  Edges bilateral: {edges_bilateral} (${bilateral_volume/1e12:.2f}T)")
+    print(f"  Clearing rate:  {cleared_volume/max(total_volume,1)*100:.1f}% of volume")
+    print(f"  CCP Default Fund: ${ccp_equity/1e9:.1f}B ({default_fund_ratio*100:.1f}% of risk)")
+    print(f"  New matrix: {W_new.shape[0]}x{W_new.shape[1]}")
+
+    return W_new, df_new
+
 def compute_state_variables(W_dense: np.ndarray, df: pd.DataFrame):
     """
     Compute initial state variables for Eisenberg-Noe clearing.
@@ -94,6 +182,13 @@ def compute_state_variables(W_dense: np.ndarray, df: pd.DataFrame):
     print(f"  Total Initial Equity: ${equity.sum() / 1e12:.2f}T")
     if obligations.sum() < 1e6:
         print("  ⚠ WARNING: Obligations near zero - check matrix scaling!")
+
+    if 'deriv_ir_notional' in df.columns:
+        derivatives_exposure = df['deriv_ir_notional'].fillna(0).values.copy()
+    else:
+        derivatives_exposure = np.zeros(n)
+    print(f"  Derivatives Exposure: ${derivatives_exposure.sum() / 1e12:.2f}T ({(derivatives_exposure > 0).sum()} banks)")
+
     return {
         'obligations': obligations,
         'external_assets': external_assets.copy(),
@@ -101,7 +196,8 @@ def compute_state_variables(W_dense: np.ndarray, df: pd.DataFrame):
         'interbank_claims': interbank_claims,
         'equity': equity.copy(),
         'payments': obligations.copy(),
-        'W': W_dense
+        'W': W_dense,
+        'derivatives_exposure': derivatives_exposure,
     }
 def run_scenario(state: dict, df: pd.DataFrame, trigger_idx: int,
                  loss_severity: float = 1.0,
@@ -203,7 +299,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                       alpha: float = 0.005,
                       max_iterations: int = DEFAULT_MAX_ITERATIONS,
                       convergence_threshold: float = DEFAULT_CONVERGENCE_THRESHOLD,
-                      distress_threshold: float = DEFAULT_DISTRESS_THRESHOLD) -> dict:
+                      distress_threshold: float = DEFAULT_DISTRESS_THRESHOLD,
+                      margin_sensitivity: float = 1.0) -> dict:
     """
     LAYER 4 — RUST INTRADAY ENGINE: Exponential fire sales + discrete time steps.
 
@@ -224,6 +321,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
     external_assets = state['external_assets'].copy()
     total_liabilities = df['total_liabilities'].values.copy()
     total_assets = df['total_assets'].values.copy()
+    derivatives_exposure = state.get('derivatives_exposure', np.zeros(len(external_assets))).copy()
     n = len(external_assets)
 
     trigger_name = (str(df.iloc[trigger_idx]['bank_name'])[:40]
@@ -235,6 +333,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
     print(f"  σ (noise):     {uncertainty_sigma}")
     print(f"  Panic thresh:  {panic_threshold}")
     print(f"  α (fire-sale): {alpha}")
+    print(f"  Margin sens:   {margin_sensitivity}")
+    print(f"  Deriv exposure: ${derivatives_exposure.sum() / 1e12:.2f}T")
 
     if RUST_AVAILABLE:
         print("  Delegating to Rust core...")
@@ -243,6 +343,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             external_assets.astype(np.float64),
             total_liabilities.astype(np.float64),
             total_assets.astype(np.float64),
+            derivatives_exposure.astype(np.float64),
             trigger_idx,
             loss_severity,
             n_steps=n_steps,
@@ -252,6 +353,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             max_clearing_iter=max_iterations,
             convergence_tol=convergence_threshold,
             distress_threshold=distress_threshold,
+            margin_sensitivity=margin_sensitivity,
         )
 
         results = {
@@ -275,6 +377,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             'withdrawn_timeline': result_dict['withdrawn_timeline'],
             'gridlock_timeline': result_dict['gridlock_timeline'],
             'equity_loss_timeline': result_dict['equity_loss_timeline'],
+            'margin_calls_timeline': result_dict['margin_calls_timeline'],
         }
 
     else:
@@ -291,6 +394,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
         withdrawn_timeline = []
         gridlock_timeline = []
         equity_loss_timeline = []
+        margin_calls_timeline = []
 
         for t in range(1, n_steps + 1):
 
@@ -302,7 +406,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
 
             run_matrix = signals < panic_threshold
             total_withdrawn_per_bank = np.zeros(n)
-            total_received_per_bank = np.zeros(n)   # cash runners receive
+            total_received_per_bank = np.zeros(n)   
+
             total_withdrawn_global = 0.0
 
             for i in range(n):
@@ -311,24 +416,44 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                         continue
                     if run_matrix[j, i] and W[i, j] > 0:
                         withdrawn = W[i, j]
-                        total_withdrawn_per_bank[i] += withdrawn   # i must pay
-                        total_received_per_bank[j] += withdrawn    # j gets cash
+                        total_withdrawn_per_bank[i] += withdrawn   
+
+                        total_received_per_bank[j] += withdrawn    
+
                         total_withdrawn_global += withdrawn
                         W[i, j] = 0.0
 
             volume_norm = total_withdrawn_global / 1e12
-            asset_price *= np.exp(-alpha * volume_norm)
+
+            margin_calls_total = 0.0
+            if margin_sensitivity > 0.0:
+                price_drop = 1.0 - asset_price
+                if price_drop > 0.0:
+                    for i in range(n):
+                        margin_call = derivatives_exposure[i] * price_drop * margin_sensitivity
+                        if margin_call <= 0.0:
+                            continue
+                        margin_calls_total += margin_call
+                        if external_assets[i] >= margin_call:
+                            external_assets[i] -= margin_call
+                        else:
+                            shortfall = margin_call - external_assets[i]
+                            external_assets[i] = 0.0
+                            total_withdrawn_global += shortfall
+
+            total_volume_norm = total_withdrawn_global / 1e12
+            asset_price *= np.exp(-alpha * total_volume_norm)
 
             for i in range(n):
-                # Credit cash received from running on others
+
                 external_assets[i] += total_received_per_bank[i]
-                # Debit fire-sale cost for being run on
+
                 if total_withdrawn_per_bank[i] > 0:
                     fire_cost = total_withdrawn_per_bank[i] / asset_price
                     external_assets[i] = max(external_assets[i] - fire_cost, 0.0)
-                # Reduce liabilities — paid-off obligations no longer owed
+
                 total_liabilities[i] -= total_withdrawn_per_bank[i]
-                # Mark-to-market
+
                 total_assets[i] = external_assets[i] * asset_price + W[:, i].sum()
 
             equity = total_assets - total_liabilities
@@ -361,6 +486,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             withdrawn_timeline.append(float(total_withdrawn_global))
             gridlock_timeline.append(failed)
             equity_loss_timeline.append(eq_loss)
+            margin_calls_timeline.append(float(margin_calls_total))
 
         initial_equity = state['equity'].copy()
         final_equity = total_assets - total_liabilities
@@ -393,6 +519,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             'withdrawn_timeline': withdrawn_timeline,
             'gridlock_timeline': gridlock_timeline,
             'equity_loss_timeline': equity_loss_timeline,
+            'margin_calls_timeline': margin_calls_timeline,
         }
 
     print(f"\n  === RESULTS ===")

@@ -20,6 +20,8 @@ struct NetworkState {
 
     total_assets: Array1<f64>,
 
+    derivatives_exposure: Array1<f64>,
+
     asset_price: f64,
 
     equity: Array1<f64>,
@@ -38,11 +40,13 @@ impl NetworkState {
         external_assets: PyReadonlyArray1<f64>,
         total_liabilities: PyReadonlyArray1<f64>,
         total_assets: PyReadonlyArray1<f64>,
+        derivatives_exposure: PyReadonlyArray1<f64>,
     ) -> Self {
         let w = w.as_array().to_owned();
         let external_assets = external_assets.as_array().to_owned();
         let total_liabilities = total_liabilities.as_array().to_owned();
         let total_assets = total_assets.as_array().to_owned();
+        let derivatives_exposure = derivatives_exposure.as_array().to_owned();
         let n = external_assets.len();
         let equity = &total_assets - &total_liabilities;
         let obligations = w.sum_axis(Axis(1));
@@ -52,6 +56,7 @@ impl NetworkState {
             external_assets,
             total_liabilities,
             total_assets,
+            derivatives_exposure,
             asset_price: 1.0,
             equity,
             payments,
@@ -100,18 +105,21 @@ struct StepResult {
     failed_payments: usize,
     #[pyo3(get)]
     total_equity_loss: f64,
+    #[pyo3(get)]
+    margin_calls_total: f64,
 }
 
 #[pymethods]
 impl StepResult {
     fn __repr__(&self) -> String {
         format!(
-            "StepResult(t={}, price={:.4}, defaults={}, distressed={}, withdrawn=${:.1}B)",
+            "StepResult(t={}, price={:.4}, defaults={}, distressed={}, withdrawn=${:.1}B, margin=${:.1}B)",
             self.t,
             self.asset_price,
             self.n_defaults,
             self.n_distressed,
             self.total_withdrawn / 1e9,
+            self.margin_calls_total / 1e9,
         )
     }
 }
@@ -128,7 +136,7 @@ fn apply_shock(state: &mut NetworkState, trigger_idx: usize, severity: f64) {
 #[pyfunction]
 #[pyo3(signature = (state, t, sigma=0.05, panic_threshold=0.10, alpha=0.005,
                      max_clearing_iter=100, convergence_tol=1e-5,
-                     distress_threshold=0.5))]
+                     distress_threshold=0.5, margin_sensitivity=1.0))]
 fn run_intraday_step(
     state: &mut NetworkState,
     t: usize,
@@ -138,6 +146,7 @@ fn run_intraday_step(
     max_clearing_iter: usize,
     convergence_tol: f64,
     distress_threshold: f64,
+    margin_sensitivity: f64,
 ) -> StepResult {
     let n = state.n;
 
@@ -189,7 +198,33 @@ fn run_intraday_step(
 
     let fire_sale_volume = total_withdrawn_global;
 
-    let volume_normalized = fire_sale_volume / 1e12;
+    let mut margin_calls_total = 0.0_f64;
+    if margin_sensitivity > 0.0 {
+        let price_drop = 1.0 - state.asset_price; 
+
+        if price_drop > 0.0 {
+            for i in 0..n {
+                let margin_call = state.derivatives_exposure[i] * price_drop * margin_sensitivity;
+                if margin_call <= 0.0 {
+                    continue;
+                }
+                margin_calls_total += margin_call;
+
+                if state.external_assets[i] >= margin_call {
+
+                    state.external_assets[i] -= margin_call;
+                } else {
+
+                    let shortfall = margin_call - state.external_assets[i];
+                    state.external_assets[i] = 0.0;
+
+                    total_withdrawn_global += shortfall;
+                }
+            }
+        }
+    }
+
+    let volume_normalized = total_withdrawn_global / 1e12;
     state.asset_price *= (-alpha * volume_normalized).exp();
     let price = state.asset_price;
 
@@ -280,21 +315,24 @@ fn run_intraday_step(
         fire_sale_volume,
         failed_payments,
         total_equity_loss,
+        margin_calls_total,
     }
 }
 
 #[pyfunction]
 #[pyo3(signature = (w, external_assets, total_liabilities, total_assets,
+                     derivatives_exposure,
                      trigger_idx, severity, n_steps=10, sigma=0.05,
                      panic_threshold=0.10, alpha=0.005,
                      max_clearing_iter=100, convergence_tol=1e-5,
-                     distress_threshold=0.5))]
+                     distress_threshold=0.5, margin_sensitivity=1.0))]
 fn run_full_simulation(
     py: Python<'_>,
     w: PyReadonlyArray2<f64>,
     external_assets: PyReadonlyArray1<f64>,
     total_liabilities: PyReadonlyArray1<f64>,
     total_assets: PyReadonlyArray1<f64>,
+    derivatives_exposure: PyReadonlyArray1<f64>,
     trigger_idx: usize,
     severity: f64,
     n_steps: usize,
@@ -304,9 +342,10 @@ fn run_full_simulation(
     max_clearing_iter: usize,
     convergence_tol: f64,
     distress_threshold: f64,
+    margin_sensitivity: f64,
 ) -> PyResult<Py<PyDict>> {
 
-    let mut state = NetworkState::new(w, external_assets, total_liabilities, total_assets);
+    let mut state = NetworkState::new(w, external_assets, total_liabilities, total_assets, derivatives_exposure);
 
     let initial_equity_saved: Vec<f64> = state.equity.to_vec();
 
@@ -324,6 +363,7 @@ fn run_full_simulation(
             max_clearing_iter,
             convergence_tol,
             distress_threshold,
+            margin_sensitivity,
         );
         step_results.push(result);
     }
@@ -354,6 +394,7 @@ fn run_full_simulation(
     let withdrawn_timeline: Vec<f64> = step_results.iter().map(|s| s.total_withdrawn).collect();
     let gridlock_timeline: Vec<usize> = step_results.iter().map(|s| s.failed_payments).collect();
     let equity_loss_timeline: Vec<f64> = step_results.iter().map(|s| s.total_equity_loss).collect();
+    let margin_calls_timeline: Vec<f64> = step_results.iter().map(|s| s.margin_calls_total).collect();
 
     let total_equity_loss: f64 = initial_equity_saved.iter()
         .zip(state.equity.iter())
@@ -377,6 +418,7 @@ fn run_full_simulation(
     dict.set_item("withdrawn_timeline", withdrawn_timeline)?;
     dict.set_item("gridlock_timeline", gridlock_timeline)?;
     dict.set_item("equity_loss_timeline", equity_loss_timeline)?;
+    dict.set_item("margin_calls_timeline", margin_calls_timeline)?;
 
     Ok(dict.into())
 }
