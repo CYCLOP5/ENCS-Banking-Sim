@@ -735,6 +735,223 @@ function StrategicDetail({ results }) {
           </div>
         </Section>
       )}
+
+      {/* ── Game Event Log ── */}
+      {(tlA.decisions?.length > 0 || tlB.decisions?.length > 0) && (
+        <Section title="Game Event Log" icon={Flame} defaultOpen={false}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Opaque log */}
+            <div>
+              <h4 className="text-xs font-[family-name:var(--font-mono)] text-crisis-red uppercase tracking-wider mb-3">
+                Opaque Regime
+              </h4>
+              <div className="space-y-2 max-h-80 overflow-auto scrollbar-thin">
+                {(tlA.decisions ?? []).map((stepDecisions, t) => {
+                  const nWithdraw = stepDecisions.filter(d => d === "WITHDRAW").length;
+                  const nAgents = stepDecisions.length;
+                  const stepLoss = tlA.step_fire_sale_loss?.[t] ?? 0;
+                  const cumLoss = tlA.cumulative_fire_sale_loss?.[t] ?? 0;
+                  // Find flippers from previous step
+                  const prevDecisions = t > 0 ? tlA.decisions[t - 1] : null;
+                  const flippedToRun = [];
+                  const flippedToStay = [];
+                  if (prevDecisions) {
+                    stepDecisions.forEach((d, i) => {
+                      if (d !== prevDecisions[i]) {
+                        const name = opaque.agent_names?.[i] ?? `Bank ${i}`;
+                        if (d === "WITHDRAW") flippedToRun.push(name);
+                        else flippedToStay.push(name);
+                      }
+                    });
+                  }
+                  return (
+                    <div key={t} className="glass rounded-lg p-3 text-[11px] font-[family-name:var(--font-mono)]">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-text-muted">Step {t + 1}:</span>
+                        <span className="text-crisis-red font-bold">{nWithdraw}/{nAgents} withdrew</span>
+                        <span className="text-text-muted">·</span>
+                        <span className="text-crisis-red">${(stepLoss / 1e9).toFixed(3)}B loss</span>
+                        <span className="text-text-muted">·</span>
+                        <span className="text-text-secondary">${(cumLoss / 1e9).toFixed(3)}B cumulative</span>
+                      </div>
+                      {flippedToRun.length > 0 && (
+                        <div className="text-crisis-red/80 text-[10px] mt-1">
+                          → Flipped to <span className="font-bold">WITHDRAW</span>: {flippedToRun.join(", ")}
+                        </div>
+                      )}
+                      {flippedToStay.length > 0 && (
+                        <div className="text-stability-green/80 text-[10px] mt-1">
+                          → Flipped to <span className="font-bold">ROLL OVER</span>: {flippedToStay.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Transparent log */}
+            <div>
+              <h4 className="text-xs font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-3">
+                Transparent Regime
+              </h4>
+              <div className="space-y-2 max-h-80 overflow-auto scrollbar-thin">
+                {(tlB.decisions ?? []).map((stepDecisions, t) => {
+                  const nWithdraw = stepDecisions.filter(d => d === "WITHDRAW").length;
+                  const nAgents = stepDecisions.length;
+                  const stepLoss = tlB.step_fire_sale_loss?.[t] ?? 0;
+                  const cumLoss = tlB.cumulative_fire_sale_loss?.[t] ?? 0;
+                  const prevDecisions = t > 0 ? tlB.decisions[t - 1] : null;
+                  const flippedToRun = [];
+                  const flippedToStay = [];
+                  if (prevDecisions) {
+                    stepDecisions.forEach((d, i) => {
+                      if (d !== prevDecisions[i]) {
+                        const name = transparent.agent_names?.[i] ?? `Bank ${i}`;
+                        if (d === "WITHDRAW") flippedToRun.push(name);
+                        else flippedToStay.push(name);
+                      }
+                    });
+                  }
+                  return (
+                    <div key={t} className="glass rounded-lg p-3 text-[11px] font-[family-name:var(--font-mono)]">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-text-muted">Step {t + 1}:</span>
+                        <span className="text-stability-green font-bold">{nWithdraw}/{nAgents} withdrew</span>
+                        <span className="text-text-muted">·</span>
+                        <span className="text-stability-green">${(stepLoss / 1e9).toFixed(3)}B loss</span>
+                        <span className="text-text-muted">·</span>
+                        <span className="text-text-secondary">${(cumLoss / 1e9).toFixed(3)}B cumulative</span>
+                      </div>
+                      {flippedToRun.length > 0 && (
+                        <div className="text-crisis-red/80 text-[10px] mt-1">
+                          → Flipped to <span className="font-bold">WITHDRAW</span>: {flippedToRun.join(", ")}
+                        </div>
+                      )}
+                      {flippedToStay.length > 0 && (
+                        <div className="text-stability-green/80 text-[10px] mt-1">
+                          → Flipped to <span className="font-bold">ROLL OVER</span>: {flippedToStay.join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* ── Decision Heatmap ── */}
+      {(tlA.decisions?.length > 0 || tlB.decisions?.length > 0) && (
+        <Section title="Per-Agent Decision Heatmap" icon={Users} defaultOpen={false}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Opaque heatmap */}
+            <div>
+              <h4 className="text-xs font-[family-name:var(--font-mono)] text-crisis-red uppercase tracking-wider mb-3">
+                Opaque Regime
+              </h4>
+              <div className="overflow-auto max-h-96 scrollbar-thin">
+                <table className="text-[9px] font-[family-name:var(--font-mono)] border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="py-1 px-2 text-left text-text-muted sticky left-0 bg-void-panel z-10">Agent</th>
+                      {steps.map((s) => (
+                        <th key={s} className="py-1 px-1 text-center text-text-muted min-w-[28px]">S{s}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: tlA.decisions?.[0]?.length ?? 0 }, (_, agentIdx) => (
+                      <tr key={agentIdx}>
+                        <td className="py-0.5 px-2 text-text-secondary whitespace-nowrap sticky left-0 bg-void-panel z-10">
+                          {opaque.agent_names?.[agentIdx] ?? `Bank ${agentIdx}`}
+                        </td>
+                        {steps.map((_, stepIdx) => {
+                          const decision = tlA.decisions?.[stepIdx]?.[agentIdx];
+                          const prevDecision = stepIdx > 0 ? tlA.decisions?.[stepIdx - 1]?.[agentIdx] : null;
+                          const isFlipped = prevDecision != null && prevDecision !== decision;
+                          const isWithdraw = decision === "WITHDRAW";
+                          return (
+                            <td
+                              key={stepIdx}
+                              title={`${opaque.agent_names?.[agentIdx] ?? `Bank ${agentIdx}`}: ${decision} (Step ${stepIdx + 1})${isFlipped ? " ★ FLIPPED" : ""}`}
+                              className={cn(
+                                "py-0.5 px-1 text-center",
+                                isWithdraw ? "bg-crisis-red/30 text-crisis-red" : "bg-stability-green/20 text-stability-green",
+                                isFlipped && "ring-1 ring-white/40"
+                              )}
+                            >
+                              {isWithdraw ? "W" : "R"}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center gap-4 mt-2 text-[9px] text-text-muted font-[family-name:var(--font-mono)]">
+                <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-crisis-red/30" /> W = Withdraw</span>
+                <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-stability-green/20" /> R = Roll Over</span>
+                <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm ring-1 ring-white/40" /> Flipped</span>
+              </div>
+            </div>
+
+            {/* Transparent heatmap */}
+            <div>
+              <h4 className="text-xs font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-3">
+                Transparent Regime
+              </h4>
+              <div className="overflow-auto max-h-96 scrollbar-thin">
+                <table className="text-[9px] font-[family-name:var(--font-mono)] border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="py-1 px-2 text-left text-text-muted sticky left-0 bg-void-panel z-10">Agent</th>
+                      {steps.map((s) => (
+                        <th key={s} className="py-1 px-1 text-center text-text-muted min-w-[28px]">S{s}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: tlB.decisions?.[0]?.length ?? 0 }, (_, agentIdx) => (
+                      <tr key={agentIdx}>
+                        <td className="py-0.5 px-2 text-text-secondary whitespace-nowrap sticky left-0 bg-void-panel z-10">
+                          {transparent.agent_names?.[agentIdx] ?? `Bank ${agentIdx}`}
+                        </td>
+                        {steps.map((_, stepIdx) => {
+                          const decision = tlB.decisions?.[stepIdx]?.[agentIdx];
+                          const prevDecision = stepIdx > 0 ? tlB.decisions?.[stepIdx - 1]?.[agentIdx] : null;
+                          const isFlipped = prevDecision != null && prevDecision !== decision;
+                          const isWithdraw = decision === "WITHDRAW";
+                          return (
+                            <td
+                              key={stepIdx}
+                              title={`${transparent.agent_names?.[agentIdx] ?? `Bank ${agentIdx}`}: ${decision} (Step ${stepIdx + 1})${isFlipped ? " ★ FLIPPED" : ""}`}
+                              className={cn(
+                                "py-0.5 px-1 text-center",
+                                isWithdraw ? "bg-crisis-red/30 text-crisis-red" : "bg-stability-green/20 text-stability-green",
+                                isFlipped && "ring-1 ring-white/40"
+                              )}
+                            >
+                              {isWithdraw ? "W" : "R"}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center gap-4 mt-2 text-[9px] text-text-muted font-[family-name:var(--font-mono)]">
+                <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-crisis-red/30" /> W = Withdraw</span>
+                <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-stability-green/20" /> R = Roll Over</span>
+                <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm ring-1 ring-white/40" /> Flipped</span>
+              </div>
+            </div>
+          </div>
+        </Section>
+      )}
     </>
   );
 }

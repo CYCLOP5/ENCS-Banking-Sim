@@ -364,6 +364,12 @@ async def run_game(req: GameRequest):
         results_opaque = run_game_simulation(info_regime="OPAQUE", **common)
         results_transparent = run_game_simulation(info_regime="TRANSPARENT", **common)
 
+        # Serialize agent names before _clean_results strips the agent objects
+        for res in (results_opaque, results_transparent):
+            res["agent_names"] = [
+                a.name for a in res.get("agents", [])
+            ] or [f"Strategic Bank {i}" for i in range(req.n_banks)]
+
         return {
             "opaque": _clean_results(results_opaque),
             "transparent": _clean_results(results_transparent),

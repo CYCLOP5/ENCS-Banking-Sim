@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play,
@@ -155,6 +155,9 @@ function DefaultTicker({ defaults = [], distressed = [] }) {
   );
 }
 
+/* ── Stable empty object so statusMap ref never changes when there's no status ── */
+const EMPTY_STATUS_MAP = Object.freeze({});
+
 /* ═══════════════════════════════════════════════════════════════════
    SIMULATION DASHBOARD
    ═══════════════════════════════════════════════════════════════════ */
@@ -178,6 +181,14 @@ export default function Simulation() {
   const [contagionLinks, setContagionLinks] = useState(null); // Set<"src-tgt">
   const [contagionActive, setContagionActive] = useState(false);
   const contagionTimerRef = useRef(null);
+
+  // ── Game playback animation ──
+  const [gameStep, setGameStep] = useState(null);              // current step index (0-based)
+  const [gamePlaybackActive, setGamePlaybackActive] = useState(false);
+  const gamePlaybackTimerRef = useRef(null);
+  const [gameRegime, setGameRegime] = useState("opaque");     // "opaque" | "transparent"
+  const [gameStatusMap, setGameStatusMap] = useState({});      // {topologyNodeId: "WITHDRAW"|"ROLL_OVER"}
+  const [gameFlippedSet, setGameFlippedSet] = useState(null);  // Set<nodeId>
 
   // ── Bank list for selector ──
   const [bankList, setBankList] = useState([]);
@@ -245,15 +256,18 @@ export default function Simulation() {
     return () => { ro.disconnect(); if (rafId) cancelAnimationFrame(rafId); };
   }, []);
 
-  // ── Build status map from results ──
-  const statusMap = {};
-  if (results?.status) {
-    results.status.forEach((s, i) => {
-      statusMap[i] = s;
-    });
-  }
+  // ── Build status map from results (memoized for reference stability) ──
+  // Dep is results?.status — NOT results — so game results ({opaque,transparent})
+  // don't produce a new {} ref, which would bust enriched's memo and crash the layout.
+  const statusArray = results?.status;
+  const statusMap = useMemo(() => {
+    if (!statusArray) return EMPTY_STATUS_MAP;
+    const map = {};
+    statusArray.forEach((s, i) => { map[i] = s; });
+    return map;
+  }, [statusArray]);
 
-  // ── Stop animation ──
+  // ── Stop contagion animation ──
   const stopContagion = useCallback(() => {
     if (contagionTimerRef.current) {
       clearInterval(contagionTimerRef.current);
@@ -264,6 +278,120 @@ export default function Simulation() {
     setContagionLinks(null);
     if (graphRef.current) graphRef.current.zoomToFit(1000);
   }, []);
+
+  // ── Stop game playback ──
+  const stopGamePlayback = useCallback(() => {
+    if (gamePlaybackTimerRef.current) {
+      clearInterval(gamePlaybackTimerRef.current);
+      gamePlaybackTimerRef.current = null;
+    }
+    setGamePlaybackActive(false);
+    setGameStep(null);
+    setGameStatusMap({});
+    setGameFlippedSet(null);
+    if (graphRef.current) graphRef.current.zoomToFit(1000);
+  }, []);
+
+  // ── Start game playback ──
+  const startGamePlayback = useCallback(() => {
+    if (!topology || !results?.opaque) return;
+    // Clear any previous
+    if (gamePlaybackTimerRef.current) clearInterval(gamePlaybackTimerRef.current);
+    stopContagion(); // ensure contagion is off
+
+    const regime = results[gameRegime] ?? results.opaque;
+    const timeline = regime?.timeline;
+    if (!timeline?.decisions?.length) return;
+
+    const nStepsGame = timeline.decisions.length;
+    const nAgents = timeline.decisions[0]?.length ?? 0;
+    const topoNodes = topology.nodes;
+    const mappableCount = Math.min(nAgents, topoNodes.length);
+
+    // Stop physics for clean visualization
+    if (graphRef.current) graphRef.current.stopPhysics();
+
+    let stepIdx = 0;
+    let prevDecisions = null;
+
+    // Initial step
+    const buildStepState = (sIdx) => {
+      const decisions = timeline.decisions[sIdx];
+      const statusObj = {};
+      const flipped = new Set();
+
+      for (let i = 0; i < mappableCount; i++) {
+        const nodeId = topoNodes[i].id;
+        statusObj[nodeId] = decisions[i]; // "WITHDRAW" or "ROLL_OVER"
+        if (prevDecisions && prevDecisions[i] !== decisions[i]) {
+          flipped.add(nodeId);
+        }
+      }
+      prevDecisions = [...decisions];
+      return { statusObj, flipped };
+    };
+
+    setGamePlaybackActive(true);
+    // Show first step immediately
+    const { statusObj, flipped } = buildStepState(0);
+    setGameStep(0);
+    setGameStatusMap(statusObj);
+    setGameFlippedSet(flipped);
+
+    // Zoom to the subgraph of game agents
+    if (graphRef.current && mappableCount > 0) {
+      graphRef.current.focusNode(topoNodes[0].id, 250);
+    }
+
+    stepIdx = 1;
+    gamePlaybackTimerRef.current = setInterval(() => {
+      if (stepIdx >= nStepsGame) {
+        clearInterval(gamePlaybackTimerRef.current);
+        gamePlaybackTimerRef.current = null;
+        // Zoom out after finishing
+        if (graphRef.current) graphRef.current.zoomToFit(2000);
+        setTimeout(() => {
+          setGamePlaybackActive(false);
+          setGameFlippedSet(null);
+        }, 3000);
+        return;
+      }
+
+      const { statusObj: sObj, flipped: fl } = buildStepState(stepIdx);
+      setGameStep(stepIdx);
+      setGameStatusMap(sObj);
+      setGameFlippedSet(fl);
+
+      // Camera: follow a withdrawing node for dramatic effect
+      if (graphRef.current && stepIdx < 10) {
+        const withdrawIds = Object.entries(sObj)
+          .filter(([, d]) => d === "WITHDRAW")
+          .map(([id]) => id);
+        if (withdrawIds.length > 0) {
+          graphRef.current.focusNode(withdrawIds[0], 200 + stepIdx * 20);
+        }
+      } else if (graphRef.current && stepIdx === 10) {
+        graphRef.current.zoomToFit(1500);
+      }
+
+      stepIdx++;
+    }, 1200); // 1.2s per step
+  }, [topology, results, gameRegime, stopContagion]);
+
+  // Auto-start game playback when strategic results arrive
+  useEffect(() => {
+    if (tab === "strategic" && results?.opaque) startGamePlayback();
+    return () => {
+      if (gamePlaybackTimerRef.current) clearInterval(gamePlaybackTimerRef.current);
+    };
+  }, [results, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Restart playback when regime toggle changes
+  useEffect(() => {
+    if (tab === "strategic" && results?.opaque && !simulating) {
+      startGamePlayback();
+    }
+  }, [gameRegime]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── BFS contagion animation ──
   const startContagion = useCallback(() => {
@@ -523,6 +651,9 @@ export default function Simulation() {
             contagionSet={contagionSet}
             contagionLinks={contagionLinks}
             contagionActive={contagionActive}
+            gameStatusMap={gameStatusMap}
+            gameActive={gamePlaybackActive}
+            gameFlippedSet={gameFlippedSet}
             width={dims.w}
             height={dims.h}
             maxNodes={liteMode ? 500 : Infinity}
@@ -543,19 +674,19 @@ export default function Simulation() {
           <div className="flex gap-1.5 flex-wrap">
             <TabBtn
               active={tab === "mechanical"}
-              onClick={() => { if (tab !== "mechanical") { stopContagion(); setResults(null); } setTab("mechanical"); }}
+              onClick={() => { if (tab !== "mechanical") { stopContagion(); stopGamePlayback(); setResults(null); } setTab("mechanical"); }}
               icon={Settings}
               label="Mechanical"
             />
             <TabBtn
               active={tab === "strategic"}
-              onClick={() => { if (tab !== "strategic") { stopContagion(); setResults(null); } setTab("strategic"); }}
+              onClick={() => { if (tab !== "strategic") { stopContagion(); stopGamePlayback(); setResults(null); } setTab("strategic"); }}
               icon={Gamepad2}
               label="Strategic"
             />
             <TabBtn
               active={tab === "climate"}
-              onClick={() => { if (tab !== "climate") { stopContagion(); setResults(null); } setTab("climate"); }}
+              onClick={() => { if (tab !== "climate") { stopContagion(); stopGamePlayback(); setResults(null); } setTab("climate"); }}
               icon={CloudLightning}
               label="Climate"
             />
@@ -1093,42 +1224,70 @@ export default function Simulation() {
             exit={{ y: 100, opacity: 0 }}
             className="absolute bottom-4 left-88 right-4 z-20"
           >
-            <GlassPanel>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="text-center">
-                  <p className="text-[10px] font-[family-name:var(--font-mono)] text-crisis-red uppercase tracking-wider mb-1">
-                    Opaque Regime
-                  </p>
-                  <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-crisis-red">
-                    {((gameData.opaque?.run_rate ?? 0) * 100).toFixed(1)}%
-                  </p>
-                  <p className="text-[10px] text-text-muted">Bank Runs</p>
-                  <p className="text-sm font-[family-name:var(--font-mono)] text-crisis-red mt-1">
-                    {formatUSD(gameData.opaque?.total_fire_sale_loss ?? 0)}
-                  </p>
-                </div>
-                <div className="text-center border-x border-border px-4">
-                  <p className="text-[10px] font-[family-name:var(--font-mono)] text-data-blue uppercase tracking-wider mb-1">
-                    Capital Saved by AI
-                  </p>
-                  <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-data-blue">
-                    {formatUSD(gameData.capital_saved ?? 0)}
-                  </p>
-                  <p className="text-[10px] text-text-muted mt-1">
-                    Transparency Dividend
-                  </p>
-                </div>
-                <div className="text-center">
-                  <p className="text-[10px] font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-1">
-                    Transparent Regime
-                  </p>
-                  <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-stability-green">
-                    {((gameData.transparent?.run_rate ?? 0) * 100).toFixed(1)}%
-                  </p>
-                  <p className="text-[10px] text-text-muted">Bank Runs</p>
-                  <p className="text-sm font-[family-name:var(--font-mono)] text-stability-green mt-1">
-                    {formatUSD(gameData.transparent?.total_fire_sale_loss ?? 0)}
-                  </p>
+            <GlassPanel className="!p-0 overflow-hidden">
+              {/* Step progress bar during playback */}
+              {gamePlaybackActive && gameStep !== null && (() => {
+                const regime = gameData[gameRegime] ?? gameData.opaque;
+                const tl = regime?.timeline;
+                const totalSteps = tl?.decisions?.length ?? 1;
+                const nWithdrawals = tl?.n_runs?.[gameStep] ?? 0;
+                const stepLoss = tl?.step_fire_sale_loss?.[gameStep] ?? 0;
+                return (
+                  <div className="border-b border-border px-4 py-2 flex items-center gap-4">
+                    <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-neon-purple to-crisis-red transition-all duration-500"
+                        style={{ width: `${((gameStep + 1) / totalSteps) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] font-[family-name:var(--font-mono)] text-text-secondary whitespace-nowrap">
+                      Step {gameStep + 1}/{totalSteps}
+                      <span className="mx-2 text-text-muted">·</span>
+                      <span className="text-crisis-red">{nWithdrawals} withdrew</span>
+                      <span className="mx-2 text-text-muted">·</span>
+                      <span className="text-crisis-red">${(stepLoss / 1e9).toFixed(2)}B loss</span>
+                    </span>
+                  </div>
+                );
+              })()}
+
+              <div className="p-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="text-center">
+                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-crisis-red uppercase tracking-wider mb-1">
+                      Opaque Regime
+                    </p>
+                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-crisis-red">
+                      {((gameData.opaque?.run_rate ?? 0) * 100).toFixed(1)}%
+                    </p>
+                    <p className="text-[10px] text-text-muted">Bank Runs</p>
+                    <p className="text-sm font-[family-name:var(--font-mono)] text-crisis-red mt-1">
+                      {formatUSD(gameData.opaque?.total_fire_sale_loss ?? 0)}
+                    </p>
+                  </div>
+                  <div className="text-center border-x border-border px-4">
+                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-data-blue uppercase tracking-wider mb-1">
+                      Capital Saved by AI
+                    </p>
+                    <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-data-blue">
+                      {formatUSD(gameData.capital_saved ?? 0)}
+                    </p>
+                    <p className="text-[10px] text-text-muted mt-1">
+                      Transparency Dividend
+                    </p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-1">
+                      Transparent Regime
+                    </p>
+                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-stability-green">
+                      {((gameData.transparent?.run_rate ?? 0) * 100).toFixed(1)}%
+                    </p>
+                    <p className="text-[10px] text-text-muted">Bank Runs</p>
+                    <p className="text-sm font-[family-name:var(--font-mono)] text-stability-green mt-1">
+                      {formatUSD(gameData.transparent?.total_fire_sale_loss ?? 0)}
+                    </p>
+                  </div>
                 </div>
               </div>
             </GlassPanel>
@@ -1205,6 +1364,62 @@ export default function Simulation() {
               {contagionActive ? "STOP REPLAY" : "REPLAY CONTAGION"}
             </span>
           </motion.button>
+        )}
+
+        {/* Game Replay/Stop Button */}
+        {results && results.opaque && tab === "strategic" && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            onClick={gamePlaybackActive ? stopGamePlayback : startGamePlayback}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
+              gamePlaybackActive
+                ? "border-neon-purple/40 shadow-lg shadow-neon-purple/10 bg-neon-purple/10"
+                : "border-border-bright hover:border-neon-purple/40 hover:shadow-lg hover:shadow-neon-purple/10"
+            )}
+          >
+            {gamePlaybackActive ? (
+              <Square className="h-4 w-4 text-neon-purple fill-neon-purple" />
+            ) : (
+              <RotateCcw className="h-4 w-4 text-neon-purple group-hover:scale-110 transition-transform" />
+            )}
+            <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-neon-purple transition-colors">
+              {gamePlaybackActive ? "STOP GAME" : "REPLAY GAME"}
+            </span>
+          </motion.button>
+        )}
+
+        {/* Regime toggle for game playback */}
+        {results && results.opaque && tab === "strategic" && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex items-center gap-1 p-1 rounded-lg glass-bright border border-border-bright"
+          >
+            <button
+              onClick={() => setGameRegime("opaque")}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
+                gameRegime === "opaque"
+                  ? "bg-crisis-red/20 text-crisis-red border border-crisis-red/40"
+                  : "text-text-muted hover:text-text-secondary"
+              )}
+            >
+              OPAQUE
+            </button>
+            <button
+              onClick={() => setGameRegime("transparent")}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
+                gameRegime === "transparent"
+                  ? "bg-stability-green/20 text-stability-green border border-stability-green/40"
+                  : "text-text-muted hover:text-text-secondary"
+              )}
+            >
+              TRANSPARENT
+            </button>
+          </motion.div>
         )}
       </div>
 

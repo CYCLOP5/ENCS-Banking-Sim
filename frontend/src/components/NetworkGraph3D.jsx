@@ -45,6 +45,9 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   contagionSet: contagionSetProp,
   contagionActive: contagionActiveProp = false,
   contagionLinks: contagionLinksProp,
+  gameStatusMap: gameStatusMapProp = {},
+  gameActive: gameActiveProp = false,
+  gameFlippedSet: gameFlippedSetProp,
   width,
   height,
   onNodeClick,
@@ -58,15 +61,29 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   const contagionSetRef     = useRef(contagionSetProp);
   const contagionLinksRef   = useRef(contagionLinksProp);
 
-  // Keep refs in sync with props — and imperatively repaint nodes on change
+  /* ── Game playback state refs ── */
+  const gameActiveRef      = useRef(gameActiveProp);
+  const gameStatusMapRef   = useRef(gameStatusMapProp);
+  const gameFlippedSetRef  = useRef(gameFlippedSetProp);
+
+  // Keep contagion refs in sync with props
   useEffect(() => {
     contagionActiveRef.current = contagionActiveProp;
     contagionSetRef.current    = contagionSetProp;
     contagionLinksRef.current  = contagionLinksProp;
 
     // Imperatively update every cached mesh to reflect new contagion state
-    applyContagionVisuals();
+    if (!gameActiveRef.current) applyContagionVisuals();
   }, [contagionActiveProp, contagionSetProp, contagionLinksProp]);
+
+  // Keep game refs in sync with props
+  useEffect(() => {
+    gameActiveRef.current     = gameActiveProp;
+    gameStatusMapRef.current  = gameStatusMapProp;
+    gameFlippedSetRef.current = gameFlippedSetProp;
+
+    applyGameVisuals();
+  }, [gameActiveProp, gameStatusMapProp, gameFlippedSetProp]);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -155,6 +172,9 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     const active   = contagionActiveRef.current;
     const revealed = contagionSetRef.current;
 
+    // Skip if game mode is active (game visuals take priority)
+    if (gameActiveRef.current) return;
+
     if (cache.size === 0) return; // meshes not yet created
 
     for (const [nodeId, mesh] of cache) {
@@ -206,6 +226,68 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     }
   }, [statusMap]);
 
+  /* ═════════════════════════════════════════════════════════════════════
+     Imperative game visual update — colours nodes by WITHDRAW/ROLL_OVER.
+     Flipped nodes get a 1.5x scale pulse. Non-game nodes are dimmed.
+     ═════════════════════════════════════════════════════════════════════ */
+  const applyGameVisuals = useCallback(() => {
+    const cache      = meshCacheRef.current;
+    const active     = gameActiveRef.current;
+    const statusObj  = gameStatusMapRef.current;
+    const flippedSet = gameFlippedSetRef.current;
+
+    if (cache.size === 0) return;
+
+    for (const [nodeId, mesh] of cache) {
+      const node = mesh.__nodeData;
+      if (!node) continue;
+
+      const baseVal = node._baseVal ?? node.val ?? 1;
+      let color, opacity, emissive, scale;
+
+      if (active && statusObj && nodeId in statusObj) {
+        const decision = statusObj[nodeId];
+        const isFlipped = flippedSet && flippedSet.has(nodeId);
+
+        if (decision === "WITHDRAW") {
+          color    = "#ff2a6d"; // crisis red
+          scale    = baseVal * (isFlipped ? 2.2 : 1.6) * 1.2;
+          opacity  = 1.0;
+          emissive = isFlipped ? 0.9 : 0.7;
+        } else {
+          // ROLL_OVER = green = staying
+          color    = "#00e676"; // stability green
+          scale    = baseVal * (isFlipped ? 1.6 : 1.0) * 1.2;
+          opacity  = isFlipped ? 1.0 : 0.8;
+          emissive = isFlipped ? 0.6 : 0.3;
+        }
+      } else if (active) {
+        // Non-game node — dim it
+        color    = "#3c3c50";
+        scale    = baseVal * 0.25 * 1.2;
+        opacity  = 0.06;
+        emissive = 0;
+      } else {
+        // Game not active: normal appearance
+        color    = node.color;
+        scale    = baseVal * 1.2;
+        opacity  = 0.9;
+        emissive = 0.25;
+      }
+
+      const mat = mesh.material;
+      mat.color.set(color);
+      mat.opacity  = opacity;
+      mat.emissive.set(color);
+      mat.emissiveIntensity = emissive;
+      mat.depthWrite = opacity > 0.3;
+      mat.needsUpdate = true;
+
+      mesh.scale.setScalar(scale);
+      mesh.renderOrder = opacity > 0.3 ? 1 : 0;
+    }
+  }, []);
+
   /* ── Expose camera helpers to parent via ref ── */
   useImperativeHandle(ref, () => ({
     focusNode(nodeId, distance = 120) {
@@ -225,12 +307,13 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     stopPhysics() {
       const fg = fgRef.current;
       if (!fg) return;
-      const charge = fg.d3Force('charge');
-      if (charge) charge.strength(0);
-      const link = fg.d3Force('link');
-      if (link) link.strength(0);
-      fg.d3Force('center', null);
-      fg.d3Force('collide', null);
+      try {
+        // Gracefully freeze the simulation via cooldownTime rather than
+        // zeroing individual forces (which can leave state.layout undefined).
+        fg.d3AlphaTarget(0);
+        fg.cooldownTime(0);               // engine checks this before layout.tick()
+        setTimeout(() => fg.cooldownTime(10000), 100); // restore for future use
+      } catch (_) { /* layout not ready yet — safe to ignore */ }
     },
     pauseRendering()  { fgRef.current?.pauseAnimation(); },
     resumeRendering() { fgRef.current?.resumeAnimation(); },
@@ -449,6 +532,62 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       labelTimers.current.set(nid, timer);
     }
   }, [contagionSetProp, contagionActiveProp, statusMap, enriched.nodes]);
+
+  /* ── Game flipped-node label sprites (imperative, no React re-render) ── */
+  const gameLabelTimers = useRef(new Map());
+  const gameLabelSprites = useRef(new Map());
+
+  useEffect(() => {
+    const active  = gameActiveProp;
+    const flipped = gameFlippedSetProp;
+    const sMap    = gameStatusMapProp;
+
+    if (!active || !flipped || flipped.size === 0 || !fgRef.current) {
+      // Cleanup game labels when game stops
+      if (!active) {
+        gameLabelSprites.current.forEach((sprite) => fgRef.current?.scene().remove(sprite));
+        gameLabelSprites.current.clear();
+        gameLabelTimers.current.forEach(clearTimeout);
+        gameLabelTimers.current.clear();
+      }
+      return;
+    }
+
+    for (const nid of flipped) {
+      // Remove previous label for this node if still showing
+      if (gameLabelSprites.current.has(nid)) {
+        fgRef.current?.scene().remove(gameLabelSprites.current.get(nid));
+        gameLabelSprites.current.delete(nid);
+        if (gameLabelTimers.current.has(nid)) {
+          clearTimeout(gameLabelTimers.current.get(nid));
+          gameLabelTimers.current.delete(nid);
+        }
+      }
+
+      const node = enriched.nodes.find((n) => n.id === nid);
+      if (!node || node.x == null) continue;
+
+      const decision = sMap[nid] || "WITHDRAW";
+      const isWithdraw = decision === "WITHDRAW";
+      const labelText = `${(node.name || "").slice(0, 22)}\n→ ${isWithdraw ? "WITHDRAW" : "ROLL OVER"}`;
+      const labelColor = isWithdraw ? "#ff2a6d" : "#00e676";
+
+      const label = new SpriteText(labelText, 3.5, labelColor);
+      label.backgroundColor = "rgba(0,0,0,0.8)";
+      label.borderRadius = 4;
+      label.padding = [3, 5];
+      label.position.set(node.x, (node.y || 0) + 10, node.z || 0);
+      fgRef.current.scene().add(label);
+      gameLabelSprites.current.set(nid, label);
+
+      const timer = setTimeout(() => {
+        fgRef.current?.scene().remove(label);
+        gameLabelSprites.current.delete(nid);
+        gameLabelTimers.current.delete(nid);
+      }, 2000);
+      gameLabelTimers.current.set(nid, timer);
+    }
+  }, [gameFlippedSetProp, gameActiveProp, gameStatusMapProp, enriched.nodes]);
 
   if (!mounted) return null;
 
