@@ -118,15 +118,26 @@ function AssetHistogram() {
             dataKey="label"
             tick={{ fill: "#888", fontSize: 10 }}
             stroke="rgba(255,255,255,0.1)"
-            interval={2} 
+            interval={2}
+            tickFormatter={(v) => {
+              // Convert $10^{x.y} to readable 10^x.y
+              const m = v.match(/\$?10\^\{?([^}]+)\}?\$?/);
+              return m ? `10^${m[1]}` : v;
+            }}
           />
           <YAxis
             tick={{ fill: "#888", fontSize: 10 }}
             stroke="rgba(255,255,255,0.1)"
           />
           <Tooltip
-            contentStyle={{ backgroundColor: "#000", borderColor: "#333" }}
+            contentStyle={{ backgroundColor: "rgba(10,10,18,0.95)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, backdropFilter: "blur(8px)" }}
             itemStyle={{ color: "#fff" }}
+            labelStyle={{ color: "#888" }}
+            labelFormatter={(v) => {
+              const m = v.match(/\$?10\^\{?([^}]+)\}?\$?/);
+              return m ? `10^${m[1]}` : v;
+            }}
+            cursor={{ fill: "rgba(255,255,255,0.05)" }}
           />
           <Legend />
           <Bar dataKey="US" fill="#00e5ff" name="US Assets" radius={[2, 2, 0, 0]} />
@@ -249,6 +260,35 @@ export default function Implementation() {
               total assets. Missing interbank data is imputed using a Gravity Model 
               calibrated to BIS locational statistics.
             </p>
+
+            <h3 className="text-sm font-bold text-white mt-4 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-data-blue" />
+              FFIEC Schedule Extraction
+            </h3>
+            <p className="text-sm text-text-secondary mb-2">
+              The ETL pipeline parses <strong>6 distinct FFIEC schedules</strong> with
+              RCFD/RCON coalescing (consolidated vs. domestic-only), extracting:
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] font-mono text-text-muted">
+              <div className="p-2 bg-white/5 rounded border border-white/5">
+                <span className="text-data-blue">RC</span> — Balance Sheet
+              </div>
+              <div className="p-2 bg-white/5 rounded border border-white/5">
+                <span className="text-data-blue">RCE</span> — Deposits
+              </div>
+              <div className="p-2 bg-white/5 rounded border border-white/5">
+                <span className="text-data-blue">RCD</span> — Trading Assets
+              </div>
+              <div className="p-2 bg-white/5 rounded border border-white/5">
+                <span className="text-data-blue">RCL</span> — Derivatives
+              </div>
+              <div className="p-2 bg-white/5 rounded border border-white/5">
+                <span className="text-data-blue">RCO</span> — Off-Balance Sheet
+              </div>
+              <div className="p-2 bg-white/5 rounded border border-white/5">
+                <span className="text-data-blue">POR</span> — Bank Metadata
+              </div>
+            </div>
             
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 rounded-lg bg-white/5 border border-white/10">
@@ -320,10 +360,15 @@ export default function Implementation() {
           </div>
 
           <GlassPanel className="order-1 lg:order-2 space-y-6">
-            <h3 className="text-lg font-bold text-white">Gravity + RAS Model</h3>
+            <h3 className="text-lg font-bold text-white">Tiered Core-Periphery Gravity Model</h3>
             <p className="text-text-secondary text-sm leading-relaxed">
-              Interbank liablities <Tex>L_&#123;ij&#125;</Tex> are unknown. We estimate them by maximizing entropy 
-              subject to balance sheet constraints:
+              Interbank liabilities <Tex>L_&#123;ij&#125;</Tex> are unknown. We estimate them
+              using a <strong>tiered core-periphery gravity model</strong>:{" "}
+              <strong className="text-stability-green">“Super-Core”</strong> nodes (Top 30 by
+              total assets) are fully connected to each other, while{" "}
+              <strong className="text-neon-purple">“Periphery”</strong> banks only lend
+              upstream to the Core. Bilateral exposures are then fitted by
+              maximizing entropy subject to balance sheet constraints:
             </p>
             <div className="p-4 bg-black/30 rounded-lg border border-white/5 my-4">
                <Tex display>
@@ -348,6 +393,39 @@ export default function Implementation() {
                  <div className="w-2 h-2 rounded-full bg-neon-purple" />
                  EU Banks (Purple)
                </div>
+            </div>
+          </GlassPanel>
+        </div>
+
+        {/* Topology Transformation */}
+        <div className="mt-8">
+          <GlassPanel className="space-y-6">
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <Activity className="w-5 h-5 text-neon-purple" />
+              Topology Transformation
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                <h4 className="font-mono text-sm text-data-blue mb-2">CCP Hub-and-Spoke</h4>
+                <p className="text-sm text-text-secondary leading-relaxed">
+                  The engine can dynamically convert bilateral interbank networks
+                  into a <strong className="text-white">Central Counterparty (CCP)</strong>{" "}
+                  configuration — replacing pair-wise exposures with a single
+                  hub-and-spoke topology to evaluate the systemic impact of central
+                  clearing mandates.
+                </p>
+              </div>
+              <div className="p-4 bg-white/5 rounded-lg border border-white/10">
+                <h4 className="font-mono text-sm text-crisis-red mb-2">Derivatives Risk Weighting</h4>
+                <p className="text-sm text-text-secondary leading-relaxed">
+                  Banks with high derivatives exposure (notional &gt; balance-sheet
+                  threshold) receive a{" "}
+                  <strong className="text-crisis-red">1.5× risk weight multiplier</strong>{" "}
+                  during graph construction, reflecting the amplified contagion
+                  channel that off-balance-sheet instruments create.
+                </p>
+              </div>
             </div>
           </GlassPanel>
         </div>
@@ -393,6 +471,25 @@ if RUST_AVAILABLE:
                  <p className="text-xs text-text-muted text-center">
                     Where <Tex>p^*</Tex> is the payment vector, <Tex>\Pi</Tex> is the relative liability matrix.
                  </p>
+
+                 <div className="mt-6 p-4 bg-white/5 rounded-lg border border-white/10">
+                    <h4 className="font-mono text-sm text-crisis-red mb-2">Exponential Fire-Sale Price Impact</h4>
+                    <p className="text-sm text-text-secondary mb-3">
+                       At each intraday step, the global asset price decays exponentially 
+                       with the volume of liquidated assets:
+                    </p>
+                    <div className="py-2 overflow-x-auto">
+                       <Tex display>
+                          P_&#123;t+1&#125; = P_t \cdot e^&#123;-\alpha \cdot V_t / 10^&#123;12&#125;&#125;
+                       </Tex>
+                    </div>
+                    <p className="text-xs text-text-muted mt-2">
+                       Where <Tex>V_t</Tex> is total withdrawn + margin-shortfall volume at step{" "}
+                       <Tex>t</Tex>, and <Tex>\alpha</Tex> controls fire-sale severity.
+                       This non-linear price impact creates cliff-edge dynamics where small 
+                       additional liquidations can trigger outsized price drops.
+                    </p>
+                 </div>
               </GlassPanel>
 
               {/* Game Theory Section */}
@@ -427,6 +524,52 @@ if RUST_AVAILABLE:
                           <strong>Run rate drops</strong> as banks coordinate on fundamentals.
                        </p>
                     </div>
+                 </div>
+              </GlassPanel>
+
+              {/* MC Regime & Sensitivity */}
+              <GlassPanel>
+                 <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-data-blue" />
+                    Monte Carlo Training Regimes
+                 </h3>
+                 <p className="text-text-secondary mb-4">
+                    The GNN dataset is generated from <strong>500 MC runs</strong> across a
+                    skewed 3-regime distribution, ensuring the model sees enough stress
+                    events to learn contagion dynamics:
+                 </p>
+                 <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="p-3 bg-white/5 rounded-lg border border-white/10 text-center">
+                       <div className="text-stability-green font-mono text-lg">20%</div>
+                       <div className="text-xs text-text-muted mt-1">Calm</div>
+                       <div className="text-[10px] text-text-muted">Small triggers, tiny severity</div>
+                    </div>
+                    <div className="p-3 bg-white/5 rounded-lg border border-white/10 text-center">
+                       <div className="text-amber-warn font-mono text-lg">35%</div>
+                       <div className="text-xs text-text-muted mt-1">Moderate</div>
+                       <div className="text-[10px] text-text-muted">Mid triggers + margins</div>
+                    </div>
+                    <div className="p-3 bg-white/5 rounded-lg border border-white/10 text-center">
+                       <div className="text-crisis-red font-mono text-lg">45%</div>
+                       <div className="text-xs text-text-muted mt-1">Stressed</div>
+                       <div className="text-[10px] text-text-muted">Top-30 triggers, full cascade</div>
+                    </div>
+                 </div>
+                 <p className="text-sm text-text-secondary">
+                    Each regime selects trigger banks from different pools 
+                    (periphery / mid-tier / super-core) with regime-specific severity,
+                    noise, panic thresholds, and margin sensitivity ranges.
+                 </p>
+
+                 <div className="mt-4 p-3 glass rounded-lg border border-neon-purple/10">
+                    <h4 className="font-mono text-xs text-neon-purple uppercase tracking-wider mb-2">Sensitivity Sweep</h4>
+                    <p className="text-xs text-text-secondary">
+                       The A/B test (Opaque vs Transparent) is automatically re-run across a 
+                       sweep of true solvency values{" "}
+                       <Tex>\theta \in \&#123;-0.05, 0.00, \ldots, 0.30\&#125;</Tex>{" "}
+                       to demonstrate that the AI transparency advantage is robust across 
+                       fundamentals — not an artefact of a single calibration point.
+                    </p>
                  </div>
               </GlassPanel>
            </div>

@@ -11,6 +11,7 @@ import {
   Globe,
   ChevronDown,
   ChevronUp,
+  Users,
 } from "lucide-react";
 import GlassPanel from "./GlassPanel";
 import { cn, formatUSD } from "../lib/utils";
@@ -152,6 +153,26 @@ function MechanicalDetail({ results }) {
 
   const totalRelevant = statusPie.reduce((acc, curr) => acc + curr.value, 0);
 
+  // ── Bank lists by status ──
+  const defaultBanks = [];
+  const distressedBanks = [];
+  const safeBanks = [];
+  bankNames.forEach((name, i) => {
+    const st = status[i] ?? "Safe";
+    const entry = {
+      name: name?.slice(0, 40) ?? `Bank ${i}`,
+      initial: initialEq[i] ?? 0,
+      final: finalEq[i] ?? 0,
+      loss: (initialEq[i] ?? 0) - (finalEq[i] ?? 0),
+    };
+    if (st === "Default") defaultBanks.push(entry);
+    else if (st === "Distressed") distressedBanks.push(entry);
+    else safeBanks.push(entry);
+  });
+  defaultBanks.sort((a, b) => b.loss - a.loss);
+  distressedBanks.sort((a, b) => b.loss - a.loss);
+  safeBanks.sort((a, b) => (b.final - a.final));
+
   return (
     <>
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -235,6 +256,48 @@ function MechanicalDetail({ results }) {
           </div>
         </div>
       </Section>
+
+      {/* ── Bank Lists by Status ── */}
+      <Section title={`Defaulted Banks (${defaultBanks.length})`} icon={AlertTriangle} defaultOpen={defaultBanks.length <= 30}>
+        {defaultBanks.length === 0 ? (
+          <p className="text-xs text-text-muted">No defaulted banks.</p>
+        ) : (
+          <div className="max-h-64 overflow-auto scrollbar-thin space-y-1">
+            {defaultBanks.map((b, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-crisis-red/5 border border-crisis-red/10">
+                <span className="text-xs text-crisis-red font-medium truncate mr-3">{b.name}</span>
+                <span className="text-[10px] text-text-muted font-mono whitespace-nowrap">−${(b.loss / 1e9).toFixed(1)}B</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      {distressedBanks.length > 0 && (
+        <Section title={`Distressed Banks (${distressedBanks.length})`} icon={Flame} defaultOpen={distressedBanks.length <= 20}>
+          <div className="max-h-64 overflow-auto scrollbar-thin space-y-1">
+            {distressedBanks.map((b, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                <span className="text-xs text-amber-400 font-medium truncate mr-3">{b.name}</span>
+                <span className="text-[10px] text-text-muted font-mono whitespace-nowrap">−${(b.loss / 1e9).toFixed(1)}B</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {safeBanks.length > 0 && (
+        <Section title={`Safe Banks (${safeBanks.length})`} icon={Users} defaultOpen={false}>
+          <div className="max-h-64 overflow-auto scrollbar-thin space-y-1">
+            {safeBanks.map((b, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-stability-green/5 border border-stability-green/10">
+                <span className="text-xs text-stability-green font-medium truncate mr-3">{b.name}</span>
+                <span className="text-[10px] text-text-muted font-mono whitespace-nowrap">${(b.final / 1e9).toFixed(1)}B eq</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {/* ── Intraday Timeline Charts ── */}
       {timelineData.length > 1 && (

@@ -8,6 +8,7 @@ import Methodology from "./pages/Methodology";
 import Implementation from "./pages/Implementation";
 import Simulation from "./pages/Simulation";
 import BankExplorer from "./pages/BankExplorer";
+import Terminology from "./pages/Terminology";
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/implementation" element={<Implementation />} />
         <Route path="/simulation" element={<Simulation />} />
         <Route path="/banks" element={<BankExplorer />} />
+        <Route path="/terminology" element={<Terminology />} />
       </Route>
     </Routes>
   );

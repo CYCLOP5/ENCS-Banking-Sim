@@ -116,10 +116,12 @@ function Toggle({ label, checked, onChange, description }) {
 }
 
 /* ── Default Ticker ────────────────────────────────────────────── */
-function DefaultTicker({ defaults = [] }) {
-  if (defaults.length === 0) return null;
+function DefaultTicker({ defaults = [], distressed = [] }) {
+  if (defaults.length === 0 && distressed.length === 0) return null;
   // Show at most 80 names to keep DOM light; full list is in detail panel
-  const visible = defaults.slice(0, 80);
+  const visibleDefaults = defaults.slice(0, 80).map(n => ({ name: n, type: 'default' }));
+  const visibleDistressed = distressed.slice(0, 40).map(n => ({ name: n, type: 'distressed' }));
+  const visible = [...visibleDefaults, ...visibleDistressed];
   const doubled = [...visible, ...visible];
   // Scale duration: ~1.2s per name, minimum 40s
   const duration = Math.max(40, visible.length * 1.2);
@@ -129,13 +131,20 @@ function DefaultTicker({ defaults = [] }) {
         className="inline-flex gap-6"
         style={{ animation: `ticker-scroll ${duration}s linear infinite` }}
       >
-        {doubled.map((name, i) => (
+        {doubled.map((item, i) => (
           <span
             key={i}
             className="inline-flex items-center gap-1.5 text-xs font-[family-name:var(--font-mono)]"
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-crisis-red animate-pulse" />
-            <span className="text-crisis-red">{name}</span>
+            <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${
+              item.type === 'distressed' ? 'bg-orange-500' : 'bg-crisis-red'
+            }`} />
+            <span className={item.type === 'distressed' ? 'text-orange-500' : 'text-crisis-red'}>
+              {item.name}
+            </span>
+            {item.type === 'distressed' && (
+              <span className="text-[10px] text-orange-500/60 uppercase">distressed</span>
+            )}
           </span>
         ))}
       </div>
@@ -352,9 +361,14 @@ export default function Simulation() {
     setContagionSet(new Set());
     setContagionLinks(new Set());
 
+    // FIX: Stop physics so nodes stop moving while we zoom
+    if (graphRef.current) {
+      graphRef.current.stopPhysics();
+    }
+
     // Zoom into trigger node first
     if (graphRef.current) {
-      graphRef.current.focusNode(trigger, 80);
+      graphRef.current.focusNode(trigger, 180);
     }
 
     contagionTimerRef.current = setInterval(() => {
@@ -379,7 +393,7 @@ export default function Simulation() {
       // Camera follows the cascade for the first 10 affected-node steps
       const affectedInStep = step.nodes.filter((n) => affected.has(n));
       if (graphRef.current && affectedInStep.length > 0 && stepIdx < 15) {
-        const dist = 80 + stepIdx * 15; // gradually pull back
+        const dist = 180 + stepIdx * 25; // gradually pull back from farther away
         graphRef.current.focusNode(affectedInStep[0], dist);
       } else if (graphRef.current && stepIdx === 15) {
         graphRef.current.zoomToFit(1500);
@@ -466,12 +480,15 @@ export default function Simulation() {
       price: results.price_timeline?.[i] ?? 1,
     })) ?? [];
 
-  // ── Defaulted bank names ──
+  // ── Defaulted & distressed bank names ──
   const defaultedBanks = [];
+  const distressedBanks = [];
   if (results?.status && results?.bank_names) {
     results.status.forEach((s, i) => {
       if (s === "Default" && results.bank_names[i]) {
         defaultedBanks.push(results.bank_names[i].slice(0, 30));
+      } else if (s === "Distressed" && results.bank_names[i]) {
+        distressedBanks.push(results.bank_names[i].slice(0, 30));
       }
     });
   }
@@ -515,19 +532,19 @@ export default function Simulation() {
           <div className="flex gap-1.5 flex-wrap">
             <TabBtn
               active={tab === "mechanical"}
-              onClick={() => setTab("mechanical")}
+              onClick={() => { if (tab !== "mechanical") { stopContagion(); setResults(null); } setTab("mechanical"); }}
               icon={Settings}
               label="Mechanical"
             />
             <TabBtn
               active={tab === "strategic"}
-              onClick={() => setTab("strategic")}
+              onClick={() => { if (tab !== "strategic") { stopContagion(); setResults(null); } setTab("strategic"); }}
               icon={Gamepad2}
               label="Strategic"
             />
             <TabBtn
               active={tab === "climate"}
-              onClick={() => setTab("climate")}
+              onClick={() => { if (tab !== "climate") { stopContagion(); setResults(null); } setTab("climate"); }}
               icon={CloudLightning}
               label="Climate"
             />
@@ -948,9 +965,9 @@ export default function Simulation() {
           >
             <GlassPanel className="!p-0 overflow-hidden">
               {/* Ticker */}
-              {defaultedBanks.length > 0 && (
+              {(defaultedBanks.length > 0 || distressedBanks.length > 0) && (
                 <div className="border-b border-border px-4 py-2">
-                  <DefaultTicker defaults={defaultedBanks} />
+                  <DefaultTicker defaults={defaultedBanks} distressed={distressedBanks} />
                 </div>
               )}
 
@@ -1140,7 +1157,10 @@ export default function Simulation() {
           <motion.button
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            onClick={() => setDetailOpen(true)}
+            onClick={() => {
+              setDetailOpen(true);
+              if (graphRef.current) graphRef.current.pauseRendering();
+            }}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border border-border-bright
               hover:border-stability-green/40 hover:shadow-lg hover:shadow-stability-green/10
               transition-all group cursor-pointer"
@@ -1180,7 +1200,10 @@ export default function Simulation() {
       {/* ── Detailed Analysis Modal ── */}
       <DetailedAnalysis
         open={detailOpen}
-        onClose={() => setDetailOpen(false)}
+        onClose={() => {
+          setDetailOpen(false);
+          if (graphRef.current) graphRef.current.resumeRendering();
+        }}
         results={results}
         tab={tab}
       />

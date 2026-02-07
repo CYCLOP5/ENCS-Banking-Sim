@@ -1,6 +1,7 @@
 import { useRef, useCallback, useMemo, useEffect, useState, useImperativeHandle, forwardRef } from "react";
 import ForceGraph3D from "react-force-graph-3d";
 import * as THREE from "three";
+import SpriteText from "three-spritetext";
 
 const STATUS_COLORS = {
   Default: "#ff2a6d",
@@ -49,8 +50,9 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   const enriched = useMemo(() => {
     if (!graphData) return { nodes: [], links: [] };
 
-    let rawNodes = graphData.nodes;
-    let rawLinks = graphData.links;
+    // Deep clone to prevent force-graph from mutating source data in-place
+    let rawNodes = structuredClone(graphData.nodes);
+    let rawLinks = structuredClone(graphData.links);
 
     const hasStatus = Object.keys(statusMap).length > 0;
 
@@ -105,17 +107,34 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     }
 
     const nodes = rawNodes.map((n) => {
-      const val = Math.max(Math.log10(n.total_assets || 1e9) - 8, 0.8);
+      let val = Math.max(Math.log10(n.total_assets || 1e9) - 8, 0.8);
       let color;
+      let _opacity = 0.9;
+      let _emissiveIntensity = 0.25;
 
       // During contagion animation — only revealed nodes get their status color
       if (contagionActive && contagionSet) {
         if (contagionSet.has(n.id)) {
           const st = statusMap[n.id];
           color = STATUS_COLORS[st] || STATUS_COLORS.Safe;
+          const isHit = st === "Default" || st === "Distressed";
+          if (isHit) {
+            // Affected nodes: large, bright, glowing
+            val *= 1.8;
+            _opacity = 1.0;
+            _emissiveIntensity = 0.7;
+          } else {
+            // Revealed safe nodes: smaller & semi-transparent
+            val *= 0.45;
+            _opacity = 0.2;
+            _emissiveIntensity = 0.1;
+          }
         } else {
-          // Not yet revealed — dim neutral color
+          // Not yet revealed — nearly invisible
           color = "rgba(60,60,80,0.6)";
+          val *= 0.25;
+          _opacity = 0.06;
+          _emissiveIntensity = 0;
         }
       } else if (n.region === "Global") {
         color = STATUS_COLORS.CCP;
@@ -124,7 +143,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       } else {
         color = REGION_COLORS[n.region] || REGION_COLORS.US;
       }
-      return { ...n, color, val };
+      return { ...n, color, val, _opacity, _emissiveIntensity };
     });
     return { nodes, links: rawLinks };
   }, [graphData, statusMap, maxNodes, contagionActive, contagionSet]);
@@ -147,6 +166,25 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     zoomToFit(duration = 800) {
       fgRef.current?.zoomToFit(duration, 80);
     },
+    /** Stop D3 physics so nodes freeze in place (prevents camera jitter) */
+    stopPhysics() {
+      const fg = fgRef.current;
+      if (!fg) return;
+      // Neuter all forces so the simulation has nothing to move
+      const charge = fg.d3Force('charge');
+      if (charge) charge.strength(0);
+      const link = fg.d3Force('link');
+      if (link) link.strength(0);
+      fg.d3Force('center', null);
+    },
+    /** Pause the WebGL render loop (saves GPU when modal is open) */
+    pauseRendering() {
+      fgRef.current?.pauseAnimation();
+    },
+    /** Resume the WebGL render loop */
+    resumeRendering() {
+      fgRef.current?.resumeAnimation();
+    },
   }), [enriched.nodes]);
 
   // Custom node object — shared geometry, instanced-friendly
@@ -156,14 +194,16 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     const mat = new THREE.MeshLambertMaterial({
       color: node.color,
       transparent: true,
-      opacity: 0.9,
+      opacity: node._opacity ?? 0.9,
       emissive: node.color,
-      emissiveIntensity: 0.25,
+      emissiveIntensity: node._emissiveIntensity ?? 0.25,
+      depthWrite: (node._opacity ?? 0.9) > 0.3, // transparent nodes don't block depth buffer
     });
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = (node._opacity ?? 0.9) > 0.3 ? 1 : 0; // draw opaque first
     mesh.scale.setScalar(radius);
     return mesh;
-  }, [geometries]);
+  }, [geometries, contagionActive, contagionSet]);
 
   // Zoom to fit after data loads
   useEffect(() => {
@@ -194,6 +234,56 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     }
     return map;
   }, [enriched.links]);
+
+  // Track which nodes just appeared so we can show a temporary label
+  const prevContagionRef = useRef(new Set());
+  const labelTimers = useRef(new Map());    // nodeId -> timeout handle
+  const labelSprites = useRef(new Map());   // nodeId -> SpriteText mesh
+
+  // When contagionSet changes, detect newly revealed affected nodes and show label
+  useEffect(() => {
+    if (!contagionActive || !contagionSet || !fgRef.current) {
+      // Cleanup all labels when contagion ends
+      labelSprites.current.forEach((sprite) => {
+        fgRef.current?.scene().remove(sprite);
+      });
+      labelSprites.current.clear();
+      labelTimers.current.forEach(clearTimeout);
+      labelTimers.current.clear();
+      prevContagionRef.current = new Set();
+      return;
+    }
+    const prev = prevContagionRef.current;
+    const newIds = [...contagionSet].filter((id) => !prev.has(id));
+    prevContagionRef.current = new Set(contagionSet);
+
+    for (const nid of newIds) {
+      const st = statusMap[nid];
+      if (st !== "Default" && st !== "Distressed") continue;
+      const node = enriched.nodes.find((n) => n.id === nid);
+      if (!node || node.x == null) continue;
+
+      const label = new SpriteText(
+        `${(node.name || "").slice(0, 22)}\n$${((node.total_assets || 0) / 1e9).toFixed(1)}B · ${st}`,
+        3.5,
+        st === "Default" ? "#ff2a6d" : "#ff8c00"
+      );
+      label.backgroundColor = "rgba(0,0,0,0.7)";
+      label.borderRadius = 4;
+      label.padding = [3, 5];
+      label.position.set(node.x, (node.y || 0) + 8, node.z || 0);
+      fgRef.current.scene().add(label);
+      labelSprites.current.set(nid, label);
+
+      // Remove label after 2.5 seconds
+      const timer = setTimeout(() => {
+        fgRef.current?.scene().remove(label);
+        labelSprites.current.delete(nid);
+        labelTimers.current.delete(nid);
+      }, 2500);
+      labelTimers.current.set(nid, timer);
+    }
+  }, [contagionSet, contagionActive, statusMap, enriched.nodes]);
 
   if (!mounted) return null;
 
@@ -250,7 +340,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
           if (contagionLinks.has(key) || contagionLinks.has(keyRev)) {
             const srcHit = (statusMap[src] === "Default" || statusMap[src] === "Distressed");
             const tgtHit = (statusMap[tgt] === "Default" || statusMap[tgt] === "Distressed");
-            if (srcHit || tgtHit) return 3;
+            if (srcHit || tgtHit) return 5;
           }
           return 0;
         }
@@ -262,7 +352,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
         const tgt = link.target?.id ?? link.target;
         const key = `${src}-${tgt}`;
         const keyRev = `${tgt}-${src}`;
-        if (contagionLinks.has(key) || contagionLinks.has(keyRev)) return 2.0;
+        if (contagionLinks.has(key) || contagionLinks.has(keyRev)) return 3.0;
         return 0.8;
       }}
       linkDirectionalParticleSpeed={(link) => {
@@ -277,22 +367,21 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
         const key = `${src}-${tgt}`;
         const keyRev = `${tgt}-${src}`;
         if (contagionLinks.has(key) || contagionLinks.has(keyRev)) {
-          const srcHit = (statusMap[src] === "Default" || statusMap[src] === "Distressed");
-          return srcHit ? "#ff2a6d" : "#ffaa00";
+          return "#ff2a6d";
         }
         return "#32e0c4";
       }}
       onNodeClick={onNodeClick}
       enableNodeDrag={false}
-      warmupTicks={120}
+      warmupTicks={100}
       cooldownTime={8000}
-      d3AlphaDecay={0.015}
-      d3VelocityDecay={0.25}
+      d3AlphaDecay={0.02}
+      d3VelocityDecay={0.3}
       d3AlphaMin={0.001}
       dagMode={null}
       linkDistance={(link) => {
         const val = link.value || 0;
-        return val > 0.5 ? 30 : val > 0.1 ? 60 : 120;
+        return val > 0.5 ? 120 : val > 0.1 ? 200 : 350;
       }}
       nodeRelSize={1.5}
     />
