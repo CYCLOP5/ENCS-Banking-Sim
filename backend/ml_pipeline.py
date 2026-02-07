@@ -24,6 +24,8 @@ from torch_geometric.data import Data, DataLoader
 from torch_geometric.nn import GCNConv, global_mean_pool
 from sklearn.metrics import classification_report, confusion_matrix
 
+import multiprocessing as mp
+
 import simulation_engine as sim
 
 BASE_DIR = Path(__file__).parent
@@ -78,10 +80,107 @@ def status_to_label(status_array: np.ndarray) -> np.ndarray:
     labels[status_array == 'Distressed'] = 1
     return labels
 
+# ---------------------------------------------------------------------------
+# Multiprocessing helpers — data shared via fork (copy-on-write on Linux)
+# ---------------------------------------------------------------------------
+
+_SHARED: dict = {}   # populated by generate_dataset before pool creation
+
+
+def _mp_worker_init():
+    """Limit per-worker OpenMP / MKL threads to avoid contention."""
+    torch.set_num_threads(1)
+
+
+def _single_mc_run(args):
+    """
+    Execute one Monte Carlo simulation run.
+    Designed for multiprocessing.Pool — reads from module-level _SHARED dict
+    which is inherited via fork.
+    """
+    run_idx, noise_pct, n_steps, seed_base = args
+
+    W_base         = _SHARED['W_base']
+    df             = _SHARED['df']
+    edge_index_base = _SHARED['edge_index']
+    pool_top30     = _SHARED['pool_top30']
+    pool_mid       = _SHARED['pool_mid']
+    pool_small     = _SHARED['pool_small']
+    pool_all       = _SHARED['pool_all']
+
+    rng = np.random.RandomState(seed=seed_base + run_idx)
+
+    # ── Determine regime ──────────────────────────────────────────────
+    r = rng.random()
+    if r < 0.35:
+        regime = "calm"
+    elif r < 0.70:
+        regime = "moderate"
+    else:
+        regime = "stressed"
+
+    # ── Perturb adjacency matrix ──────────────────────────────────────
+    noise = 1.0 + rng.uniform(-noise_pct, noise_pct, size=W_base.shape)
+    W_noisy = np.maximum(W_base * noise, 0.0)
+    np.fill_diagonal(W_noisy, 0.0)
+
+    # ── Regime-specific parameters ────────────────────────────────────
+    if regime == "calm":
+        trigger_idx = int(rng.choice(pool_small if len(pool_small) > 0 else pool_all))
+        severity    = float(rng.uniform(0.01, 0.10))
+        sigma       = rng.uniform(0.01, 0.03)
+        panic_th    = rng.uniform(0.30, 0.50)
+        alpha       = rng.uniform(0.0005, 0.002)
+        margin_sens = 0.0
+    elif regime == "moderate":
+        trigger_idx = int(rng.choice(pool_mid if len(pool_mid) > 0 else pool_all))
+        severity    = float(rng.uniform(0.05, 0.40))
+        sigma       = rng.uniform(0.03, 0.06)
+        panic_th    = rng.uniform(0.15, 0.30)
+        alpha       = rng.uniform(0.001, 0.004)
+        margin_sens = rng.uniform(0.0, 0.5)
+    else:  # stressed
+        trigger_idx = int(rng.choice(pool_top30))
+        severity    = float(rng.uniform(0.30, 1.0))
+        sigma       = rng.uniform(0.05, 0.10)
+        panic_th    = rng.uniform(0.05, 0.15)
+        alpha       = rng.uniform(0.004, 0.010)
+        margin_sens = rng.uniform(0.5, 2.0)
+
+    # ── Run simulation ────────────────────────────────────────────────
+    state = sim.compute_state_variables(W_noisy, df)
+
+    try:
+        results = sim.run_rust_intraday(
+            state, df, trigger_idx, severity,
+            n_steps=n_steps,
+            uncertainty_sigma=sigma,
+            panic_threshold=panic_th,
+            alpha=alpha,
+            margin_sensitivity=margin_sens,
+            distress_threshold=0.5,
+        )
+    except Exception:
+        return None
+
+    # ── Build PyG graph ───────────────────────────────────────────────
+    node_feats = build_node_features(W_noisy, df)
+    labels = status_to_label(results['status'])
+
+    data = Data(
+        x=torch.tensor(node_feats, dtype=torch.float32),
+        edge_index=torch.tensor(edge_index_base, dtype=torch.long),
+        y=torch.tensor(labels, dtype=torch.long),
+    )
+    return (data, regime)
+
+
 def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
-                     n_steps: int = 5, verbose: bool = True) -> list:
+                     n_steps: int = 5, n_workers: int | None = None,
+                     verbose: bool = True) -> list:
     """
     Run the simulation `n_runs` times with random perturbations.
+    Uses multiprocessing to parallelise across CPU cores.
     Returns a list of PyG Data objects.
 
     Runs are split into three regimes so the model sees genuine Safe labels:
@@ -92,10 +191,13 @@ def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
       - STRESSED (30%): high severity, full margins & fire-sales,
                         top-connected triggers → mass default.
     """
+    global _SHARED
+
     print("\n" + "=" * 60)
     print(f"GNN DATA GENERATION — {n_runs} Monte Carlo runs  (3 regimes)")
     print("=" * 60)
 
+    # ── Load data once in the main process ────────────────────────────
     W_sparse, df = sim.load_and_align_network()
     W_base = sim.rescale_matrix_to_dollars(W_sparse, df)
     n = W_base.shape[0]
@@ -104,102 +206,63 @@ def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
 
     out_strength = W_base.sum(axis=1)
     rank = np.argsort(out_strength)[::-1]
-    pool_top30   = rank[:min(30, n)]                     
+    pool_top30 = rank[:min(30, n)]
+    pool_mid   = rank[min(30, n):min(200, n)]
+    pool_small = rank[min(200, n):]
+    pool_all   = np.arange(n)
 
-    pool_mid     = rank[min(30, n):min(200, n)]          
+    # ── Shared data — inherited by workers via fork (COW) ─────────────
+    _SHARED.update({
+        'W_base':     W_base,
+        'df':         df,
+        'edge_index': edge_index_base,
+        'pool_top30': pool_top30,
+        'pool_mid':   pool_mid,
+        'pool_small': pool_small,
+        'pool_all':   pool_all,
+    })
 
-    pool_small   = rank[min(200, n):]                    
+    if n_workers is None:
+        n_workers = min(mp.cpu_count(), 12)
+    # Guarantee at least 1 worker
+    n_workers = max(1, n_workers)
 
-    pool_all     = np.arange(n)
+    args_list = [(i, noise_pct, n_steps, 42) for i in range(n_runs)]
+    chunksize = max(1, n_runs // (n_workers * 8))
 
-    rng = np.random.RandomState(seed=42)
-    dataset = []
-    t0 = time.time()
+    dataset: list = []
     label_counts = {0: 0, 1: 0}
     regime_counts = {"calm": 0, "moderate": 0, "stressed": 0}
+    failed = 0
+    t0 = time.time()
 
-    for run_idx in range(n_runs):
+    print(f"  Workers: {n_workers}  |  Chunksize: {chunksize}")
 
-        r = rng.random()
-        if r < 0.35:
-            regime = "calm"
-        elif r < 0.70:
-            regime = "moderate"
-        else:
-            regime = "stressed"
+    with mp.Pool(processes=n_workers, initializer=_mp_worker_init) as pool:
+        results_iter = pool.imap_unordered(_single_mc_run, args_list,
+                                           chunksize=chunksize)
+        for i, result in enumerate(results_iter):
+            if result is not None:
+                data, regime = result
+                dataset.append(data)
+                regime_counts[regime] += 1
+                for lbl in data.y.numpy():
+                    label_counts[int(lbl)] += 1
+            else:
+                failed += 1
 
-        noise = 1.0 + rng.uniform(-noise_pct, noise_pct, size=W_base.shape)
-        W_noisy = np.maximum(W_base * noise, 0.0)
-        np.fill_diagonal(W_noisy, 0.0)
-
-        if regime == "calm":
-            trigger_idx = int(rng.choice(pool_small if len(pool_small) > 0 else pool_all))
-            severity    = float(rng.uniform(0.01, 0.10))
-            sigma       = rng.uniform(0.01, 0.03)
-            panic_th    = rng.uniform(0.30, 0.50)       
-
-            alpha       = rng.uniform(0.0005, 0.002)    
-
-            margin_sens = 0.0                            
-
-        elif regime == "moderate":
-            trigger_idx = int(rng.choice(pool_mid if len(pool_mid) > 0 else pool_all))
-            severity    = float(rng.uniform(0.05, 0.40))
-            sigma       = rng.uniform(0.03, 0.06)
-            panic_th    = rng.uniform(0.15, 0.30)
-            alpha       = rng.uniform(0.001, 0.004)
-            margin_sens = rng.uniform(0.0, 0.5)
-        else:  # stressed
-            trigger_idx = int(rng.choice(pool_top30))
-            severity    = float(rng.uniform(0.30, 1.0))
-            sigma       = rng.uniform(0.05, 0.10)
-            panic_th    = rng.uniform(0.05, 0.15)
-            alpha       = rng.uniform(0.004, 0.010)
-            margin_sens = rng.uniform(0.5, 2.0)
-
-        state = sim.compute_state_variables(W_noisy, df)
-
-        try:
-            results = sim.run_rust_intraday(
-                state, df, trigger_idx, severity,
-                n_steps=n_steps,
-                uncertainty_sigma=sigma,
-                panic_threshold=panic_th,
-                alpha=alpha,
-                margin_sensitivity=margin_sens,
-                distress_threshold=0.5,
-            )
-        except Exception as e:
-            if verbose:
-                print(f"  Run {run_idx}: FAILED ({e})")
-            continue
-
-        node_feats = build_node_features(W_noisy, df)
-        labels = status_to_label(results['status'])
-
-        data = Data(
-            x=torch.tensor(node_feats, dtype=torch.float32),
-            edge_index=torch.tensor(edge_index_base, dtype=torch.long),
-            y=torch.tensor(labels, dtype=torch.long),
-        )
-        dataset.append(data)
-        regime_counts[regime] += 1
-
-        for lbl in labels:
-            label_counts[int(lbl)] += 1
-
-        if verbose and (run_idx + 1) % 50 == 0:
-            elapsed = time.time() - t0
-            rate = (run_idx + 1) / elapsed
-            eta = (n_runs - run_idx - 1) / rate
-            frac_risky = label_counts[1] / max(label_counts[0] + label_counts[1], 1) * 100
-            print(f"  [{run_idx+1}/{n_runs}] {rate:.1f} runs/sec | ETA {eta:.0f}s | "
-                  f"Safe={label_counts[0]:,} Risky={label_counts[1]:,} ({frac_risky:.0f}%)"
-                  f" | calm={regime_counts['calm']} mod={regime_counts['moderate']}"
-                  f" stress={regime_counts['stressed']}")
+            if verbose and (i + 1) % 50 == 0:
+                elapsed = time.time() - t0
+                rate = (i + 1) / elapsed
+                eta = (n_runs - i - 1) / rate
+                frac_risky = label_counts[1] / max(label_counts[0] + label_counts[1], 1) * 100
+                print(f"  [{i+1}/{n_runs}] {rate:.1f} runs/sec | ETA {eta:.0f}s | "
+                      f"Safe={label_counts[0]:,} Risky={label_counts[1]:,} ({frac_risky:.0f}%)"
+                      f" | calm={regime_counts['calm']} mod={regime_counts['moderate']}"
+                      f" stress={regime_counts['stressed']}")
 
     elapsed = time.time() - t0
-    print(f"\n  Generated {len(dataset)} graphs in {elapsed:.1f}s")
+    print(f"\n  Generated {len(dataset)} graphs in {elapsed:.1f}s  ({failed} failed)")
     print(f"  Regimes: calm={regime_counts['calm']}, moderate={regime_counts['moderate']}, "
           f"stressed={regime_counts['stressed']}")
     print(f"  Label distribution: Safe={label_counts[0]:,}  Risky={label_counts[1]:,}")
@@ -411,12 +474,14 @@ def main():
     parser.add_argument('--train-only', action='store_true', help='Only train (requires existing data)')
     parser.add_argument('--batch-size', type=int, default=4, help='Batch size for training')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--workers', type=int, default=None,
+                        help=f'Parallel workers (default: min(cpu_count, 12) = {min(mp.cpu_count(), 8)})')
     args = parser.parse_args()
 
     t_start = time.time()
 
     if not args.train_only:
-        dataset = generate_dataset(n_runs=args.runs, verbose=True)
+        dataset = generate_dataset(n_runs=args.runs, n_workers=args.workers, verbose=True)
 
         torch.save(dataset, str(DATASET_PATH))
         print(f"\n  Dataset saved: {DATASET_PATH}")
