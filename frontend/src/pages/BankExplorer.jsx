@@ -45,7 +45,11 @@ export default function BankExplorer() {
 
   // Filter + sort
   const filtered = useMemo(() => {
-    let data = banks;
+    let data = banks.filter((b) => {
+      const name = b?.name ?? "";
+      const s = String(name).trim();
+      return s.length > 0 && s.toLowerCase() !== "nan";
+    });
     if (search) {
       const q = search.toLowerCase();
       data = data.filter(

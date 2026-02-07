@@ -103,6 +103,21 @@ function MechanicalDetail({ results }) {
 
   const status = results.status ?? [];
   const bankNames = results.bank_names ?? [];
+    const isValidName = (name) => {
+      if (name === null || name === undefined) return false;
+      const s = String(name).trim();
+      if (s.length === 0) return false;
+      const lower = s.toLowerCase();
+      return lower !== "nan" && lower !== "0";
+    };
+
+    const isValidEntry = (entry) => {
+      if (!isValidName(entry.name)) return false;
+      const nameStr = String(entry.name).trim();
+      const isPlaceholder = /^bank\s+\d+$/i.test(nameStr);
+      const allZero = (entry.initial ?? 0) === 0 && (entry.final ?? 0) === 0;
+      return !(isPlaceholder && allZero);
+    };
   const initialEq = results.initial_equity ?? [];
   const finalEq = results.final_equity ?? [];
 
@@ -115,6 +130,7 @@ function MechanicalDetail({ results }) {
       loss: (initialEq[i] ?? 0) - (finalEq[i] ?? 0),
       status: status[i] ?? "Safe",
     }))
+    .filter((c) => isValidEntry(c))
     .sort((a, b) => b.loss - a.loss)
     .slice(0, 15);
 
@@ -166,6 +182,7 @@ function MechanicalDetail({ results }) {
       final: finalEq[i] ?? 0,
       loss: (initialEq[i] ?? 0) - (finalEq[i] ?? 0),
     };
+    if (!isValidEntry(entry)) return;
     if (st === "Default") defaultBanks.push(entry);
     else if (st === "Distressed") distressedBanks.push(entry);
     else safeBanks.push(entry);
@@ -502,25 +519,6 @@ function MechanicalDetail({ results }) {
         </div>
       </Section>
 
-      {/* ── All Defaulted Banks ── */}
-      {(results.n_defaults ?? 0) > 0 && (
-        <Section title={`All Defaulted Banks (${results.n_defaults})`} icon={Flame} defaultOpen={false}>
-          <div className="flex flex-wrap gap-2 max-h-60 overflow-auto">
-            {bankNames
-              .map((name, i) => ({ name: (typeof name === "string" ? name : String(name ?? `Bank ${i}`)), status: status[i] }))
-              .filter((b) => b.status === "Default")
-              .map((b, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-crisis-red/10 border border-crisis-red/20 text-[10px] font-[family-name:var(--font-mono)] text-crisis-red"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-crisis-red" />
-                  {b.name?.slice(0, 30)}
-                </span>
-              ))}
-          </div>
-        </Section>
-      )}
     </>
   );
 }
