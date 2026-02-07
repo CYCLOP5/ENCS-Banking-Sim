@@ -1,15 +1,18 @@
 """
-Single-core GNN pipeline — no multiprocessing, no deadlocks.
 
 Usage:
     python ml_pipeline.py
+
     python ml_pipeline.py --generate-only
+
     python ml_pipeline.py --train-only
+
     python ml_pipeline.py --runs 500
+
 """
 
 import argparse
-import sys
+import multiprocessing as mp
 import time
 from pathlib import Path
 
@@ -21,17 +24,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import classification_report, confusion_matrix
 from torch_geometric.data import Data, DataLoader
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, global_mean_pool
 
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data" / "output"
 MODEL_PATH = BASE_DIR / "gnn_model.pth"
 DATASET_PATH = DATA_DIR / "gnn_dataset.pt"
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Feature engineering
-# ═══════════════════════════════════════════════════════════════════════════
 
 def build_node_features(W: np.ndarray, df: pd.DataFrame) -> np.ndarray:
     """
@@ -48,6 +47,7 @@ def build_node_features(W: np.ndarray, df: pd.DataFrame) -> np.ndarray:
     """
     n = W.shape[0]
     out_strength = W.sum(axis=1)
+
     in_strength = W.sum(axis=0)
 
     ta = df["total_assets"].values.astype(np.float64)
@@ -87,45 +87,145 @@ def build_node_features(W: np.ndarray, df: pd.DataFrame) -> np.ndarray:
 
 
 def build_edge_index(W: np.ndarray) -> np.ndarray:
-    """Convert dense adjacency to COO edge_index (2 x E)."""
+    """Convert dense adjacency to COO edge_index (2 × E)."""
     rows, cols = np.nonzero(W)
     return np.stack([rows, cols], axis=0).astype(np.int64)
 
 
 def status_to_label(status_array: np.ndarray) -> np.ndarray:
-    """Map status strings -> binary labels. 1 = Risky (Default or Distressed), 0 = Safe."""
+    """Map status strings → binary labels.  1 = Risky (Default or Distressed), 0 = Safe."""
     labels = np.zeros(len(status_array), dtype=np.int64)
     labels[status_array == "Default"] = 1
     labels[status_array == "Distressed"] = 1
     return labels
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Data generation — single-core sequential loop
-# ═══════════════════════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------------
+# Multiprocessing helpers — shared data passed via initializer for forkserver
+# ---------------------------------------------------------------------------
+
+_SHARED: dict = {}  # populated per-worker by _mp_worker_init
+
+
+def _mp_worker_init(shared_data):
+    """Initialise worker: store shared data and limit thread counts."""
+    import os
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    torch.set_num_threads(1)
+    _SHARED.update(shared_data)
+
+
+def _single_mc_run(args):
+    """
+    Execute one Monte Carlo simulation run.
+    Reads from module-level _SHARED dict populated by _mp_worker_init.
+    """
+    run_idx, noise_pct, n_steps, seed_base = args
+
+    W_base = _SHARED["W_base"]
+    df = _SHARED["df"]
+    edge_index_base = _SHARED["edge_index"]
+    pool_top30 = _SHARED["pool_top30"]
+    pool_mid = _SHARED["pool_mid"]
+    pool_small = _SHARED["pool_small"]
+    pool_all = _SHARED["pool_all"]
+
+    rng = np.random.RandomState(seed=seed_base + run_idx)
+
+    # ── Determine regime ──────────────────────────────────────────────
+    # Skewed toward stressed to improve class balance (~40-45% risky)
+    r = rng.random()
+    if r < 0.20:
+        regime = "calm"
+    elif r < 0.55:
+        regime = "moderate"
+    else:
+        regime = "stressed"
+
+    # ── Perturb adjacency matrix ──────────────────────────────────────
+    noise = 1.0 + rng.uniform(-noise_pct, noise_pct, size=W_base.shape)
+    W_noisy = np.maximum(W_base * noise, 0.0)
+    np.fill_diagonal(W_noisy, 0.0)
+
+    # ── Regime-specific parameters ────────────────────────────────────
+    if regime == "calm":
+        trigger_idx = int(rng.choice(pool_small if len(pool_small) > 0 else pool_all))
+        severity = float(rng.uniform(0.01, 0.08))
+        sigma = rng.uniform(0.01, 0.02)
+        panic_th = rng.uniform(0.35, 0.50)
+        alpha = rng.uniform(0.0005, 0.0015)
+        margin_sens = 0.0
+    elif regime == "moderate":
+        # Wider trigger pool: include some top-connected banks
+        pool_mod = np.concatenate([pool_mid, pool_top30[len(pool_top30)//2:]])
+        trigger_idx = int(rng.choice(pool_mod if len(pool_mod) > 0 else pool_all))
+        severity = float(rng.uniform(0.15, 0.55))
+        sigma = rng.uniform(0.04, 0.08)
+        panic_th = rng.uniform(0.10, 0.25)
+        alpha = rng.uniform(0.002, 0.006)
+        margin_sens = rng.uniform(0.1, 0.8)
+    else:  # stressed
+        trigger_idx = int(rng.choice(pool_top30))
+        severity = float(rng.uniform(0.40, 1.0))
+        sigma = rng.uniform(0.06, 0.12)
+        panic_th = rng.uniform(0.03, 0.12)
+        alpha = rng.uniform(0.005, 0.012)
+        margin_sens = rng.uniform(0.8, 2.5)
+
+    # ── Run simulation ────────────────────────────────────────────────
+    state = sim.compute_state_variables(W_noisy, df)
+
+    try:
+        results = sim.run_rust_intraday(
+            state,
+            df,
+            trigger_idx,
+            severity,
+            n_steps=n_steps,
+            uncertainty_sigma=sigma,
+            panic_threshold=panic_th,
+            alpha=alpha,
+            margin_sensitivity=margin_sens,
+            distress_threshold=0.5,
+        )
+    except Exception:
+        return None
+
+    # ── Return raw numpy arrays (avoid pickling torch tensors through pipe) ─
+    node_feats = build_node_features(W_noisy, df)
+    labels = status_to_label(results["status"])
+
+    return (node_feats, labels, edge_index_base, regime)
+
 
 def generate_dataset(
     n_runs: int = 500,
     noise_pct: float = 0.10,
     n_steps: int = 5,
+    n_workers: int | None = None,
     verbose: bool = True,
 ) -> list:
     """
     Run the simulation `n_runs` times with random perturbations.
-    Simple sequential loop — no multiprocessing.
+    Uses multiprocessing to parallelise across CPU cores.
     Returns a list of PyG Data objects.
 
-    Regimes (skewed toward stress for ~40-45% risky):
-      - CALM     (20%): small triggers, tiny severity
-      - MODERATE (35%): mid triggers, medium severity + margins
-      - STRESSED (45%): top triggers, high severity + full contagion
+    Runs are split into three regimes so the model sees both classes:
+      - CALM   (20%): tiny severity, no margin spirals, low fire-sale α,
+                       small-bank triggers → most nodes survive.
+      - MODERATE (35%): medium-high severity, margins & fire-sales,
+                        mixed trigger pool incl. some top banks → partial cascade.
+      - STRESSED (45%): high severity, full margins & fire-sales,
+                        top-connected triggers → mass default.
     """
     print("\n" + "=" * 60)
     print(f"GNN DATA GENERATION — {n_runs} Monte Carlo runs  (3 regimes)")
     print("=" * 60)
-    sys.stdout.flush()
 
-    # ── Load data ─────────────────────────────────────────────────────
+    # ── Load data once in the main process ────────────────────────────
     W_sparse, df = sim.load_and_align_network()
     W_base = sim.rescale_matrix_to_dollars(W_sparse, df)
     n = W_base.shape[0]
@@ -139,102 +239,74 @@ def generate_dataset(
     pool_small = rank[min(200, n) :]
     pool_all = np.arange(n)
 
+    # ── Shared data — passed to workers via initializer ───────────────
+    shared_data = {
+        "W_base": W_base,
+        "df": df,
+        "edge_index": edge_index_base,
+        "pool_top30": pool_top30,
+        "pool_mid": pool_mid,
+        "pool_small": pool_small,
+        "pool_all": pool_all,
+    }
+
+    if n_workers is None:
+        n_workers = min(mp.cpu_count(), 12)
+    # Guarantee at least 1 worker
+    n_workers = max(1, n_workers)
+
+    args_list = [(i, noise_pct, n_steps, 42) for i in range(n_runs)]
+    chunksize = max(1, n_runs // (n_workers * 8))
+
     dataset: list = []
     label_counts = {0: 0, 1: 0}
     regime_counts = {"calm": 0, "moderate": 0, "stressed": 0}
     failed = 0
     t0 = time.time()
 
-    for i in range(n_runs):
-        rng = np.random.RandomState(seed=42 + i)
+    print(f"  Workers: {n_workers}  |  Chunksize: {chunksize}")
 
-        # ── Determine regime ──────────────────────────────────────────
-        r = rng.random()
-        if r < 0.20:
-            regime = "calm"
-        elif r < 0.55:
-            regime = "moderate"
-        else:
-            regime = "stressed"
+    # Use forkserver to avoid deadlocks from fork + PyTorch internal threads
+    ctx = mp.get_context("forkserver")
 
-        # ── Perturb adjacency matrix ──────────────────────────────────
-        noise = 1.0 + rng.uniform(-noise_pct, noise_pct, size=W_base.shape)
-        W_noisy = np.maximum(W_base * noise, 0.0)
-        np.fill_diagonal(W_noisy, 0.0)
-
-        # ── Regime-specific parameters ────────────────────────────────
-        if regime == "calm":
-            trigger_idx = int(rng.choice(pool_small if len(pool_small) > 0 else pool_all))
-            severity = float(rng.uniform(0.01, 0.08))
-            sigma = rng.uniform(0.01, 0.02)
-            panic_th = rng.uniform(0.35, 0.50)
-            alpha = rng.uniform(0.0005, 0.0015)
-            margin_sens = 0.0
-        elif regime == "moderate":
-            pool_mod = np.concatenate([pool_mid, pool_top30[len(pool_top30) // 2 :]])
-            trigger_idx = int(rng.choice(pool_mod if len(pool_mod) > 0 else pool_all))
-            severity = float(rng.uniform(0.15, 0.55))
-            sigma = rng.uniform(0.04, 0.08)
-            panic_th = rng.uniform(0.10, 0.25)
-            alpha = rng.uniform(0.002, 0.006)
-            margin_sens = rng.uniform(0.1, 0.8)
-        else:  # stressed
-            trigger_idx = int(rng.choice(pool_top30))
-            severity = float(rng.uniform(0.40, 1.0))
-            sigma = rng.uniform(0.06, 0.12)
-            panic_th = rng.uniform(0.03, 0.12)
-            alpha = rng.uniform(0.005, 0.012)
-            margin_sens = rng.uniform(0.8, 2.5)
-
-        # ── Run simulation ────────────────────────────────────────────
-        state = sim.compute_state_variables(W_noisy, df)
-
-        try:
-            results = sim.run_rust_intraday(
-                state,
-                df,
-                trigger_idx,
-                severity,
-                n_steps=n_steps,
-                uncertainty_sigma=sigma,
-                panic_threshold=panic_th,
-                alpha=alpha,
-                margin_sensitivity=margin_sens,
-                distress_threshold=0.5,
-            )
-        except Exception:
-            failed += 1
-            continue
-
-        # ── Build PyG graph ───────────────────────────────────────────
-        node_feats = build_node_features(W_noisy, df)
-        labels = status_to_label(results["status"])
-
-        data = Data(
-            x=torch.tensor(node_feats, dtype=torch.float32),
-            edge_index=torch.tensor(edge_index_base, dtype=torch.long),
-            y=torch.tensor(labels, dtype=torch.long),
+    with ctx.Pool(
+        processes=n_workers,
+        initializer=_mp_worker_init,
+        initargs=(shared_data,),
+        maxtasksperchild=50,  # recycle workers to prevent resource leaks
+    ) as pool:
+        results_iter = pool.imap_unordered(
+            _single_mc_run, args_list, chunksize=chunksize
         )
-        dataset.append(data)
-        regime_counts[regime] += 1
-        for lbl in labels:
-            label_counts[int(lbl)] += 1
+        for i, result in enumerate(results_iter):
+            if result is not None:
+                node_feats, labels, ei, regime = result
+                # Build PyG Data in the main process (no torch pickling)
+                data = Data(
+                    x=torch.tensor(node_feats, dtype=torch.float32),
+                    edge_index=torch.tensor(ei, dtype=torch.long),
+                    y=torch.tensor(labels, dtype=torch.long),
+                )
+                dataset.append(data)
+                regime_counts[regime] += 1
+                for lbl in labels:
+                    label_counts[int(lbl)] += 1
+            else:
+                failed += 1
 
-        # ── Progress ──────────────────────────────────────────────────
-        if verbose and (i + 1) % 25 == 0:
-            elapsed = time.time() - t0
-            rate = (i + 1) / elapsed
-            eta = (n_runs - i - 1) / rate
-            frac_risky = (
-                label_counts[1] / max(label_counts[0] + label_counts[1], 1) * 100
-            )
-            print(
-                f"  [{i + 1}/{n_runs}] {rate:.1f} runs/sec | ETA {eta:.0f}s | "
-                f"Safe={label_counts[0]:,} Risky={label_counts[1]:,} ({frac_risky:.0f}%)"
-                f" | calm={regime_counts['calm']} mod={regime_counts['moderate']}"
-                f" stress={regime_counts['stressed']}"
-            )
-            sys.stdout.flush()
+            if verbose and (i + 1) % 50 == 0:
+                elapsed = time.time() - t0
+                rate = (i + 1) / elapsed
+                eta = (n_runs - i - 1) / rate
+                frac_risky = (
+                    label_counts[1] / max(label_counts[0] + label_counts[1], 1) * 100
+                )
+                print(
+                    f"  [{i + 1}/{n_runs}] {rate:.1f} runs/sec | ETA {eta:.0f}s | "
+                    f"Safe={label_counts[0]:,} Risky={label_counts[1]:,} ({frac_risky:.0f}%)"
+                    f" | calm={regime_counts['calm']} mod={regime_counts['moderate']}"
+                    f" stress={regime_counts['stressed']}"
+                )
 
     elapsed = time.time() - t0
     print(f"\n  Generated {len(dataset)} graphs in {elapsed:.1f}s  ({failed} failed)")
@@ -246,19 +318,17 @@ def generate_dataset(
     total = label_counts[0] + label_counts[1]
     if total > 0:
         print(f"  Class balance: {label_counts[1] / total * 100:.1f}% risky")
+
+    import sys
     sys.stdout.flush()
 
     return dataset
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# GCN model
-# ═══════════════════════════════════════════════════════════════════════════
-
 class SystRiskGCN(nn.Module):
     """
     3-layer Graph Convolutional Network for node-level risk classification.
-    Architecture: GCNConv(in->64) -> GCNConv(64->32) -> GCNConv(32->16) -> Linear(16->2)
+    Architecture: GCNConv(in→64) → GCNConv(64→32) → GCNConv(32→16) → Linear(16→2)
     """
 
     def __init__(
@@ -277,6 +347,7 @@ class SystRiskGCN(nn.Module):
         self.dropout = dropout
 
     def forward(self, x, edge_index):
+
         x = self.conv1(x, edge_index)
         x = F.relu(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -292,16 +363,12 @@ class SystRiskGCN(nn.Module):
         return logits
 
     def predict_proba(self, x, edge_index):
-        """Return softmax probabilities (N x 2)."""
+        """Return softmax probabilities (N × 2)."""
         self.eval()
         with torch.no_grad():
             logits = self.forward(x, edge_index)
             return F.softmax(logits, dim=1)
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Training
-# ═══════════════════════════════════════════════════════════════════════════
 
 def train_model(
     dataset: list,
@@ -315,6 +382,7 @@ def train_model(
     Train the GCN on the generated dataset.
     Uses class-weighted cross-entropy to handle label imbalance.
     """
+    import sys
     print("\n" + "=" * 60)
     print("GNN TRAINING")
     print("=" * 60)
@@ -323,12 +391,15 @@ def train_model(
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"  Device: {device}")
+    sys.stdout.flush()
 
     n_train = int(len(dataset) * 0.8)
     train_data = dataset[:n_train]
     val_data = dataset[n_train:]
     print(f"  Train graphs: {len(train_data)}, Val graphs: {len(val_data)}")
 
+    # num_workers=0: data is already in RAM — no I/O benefit from sub-processes,
+    # and spawning workers after the forkserver pool can deadlock.
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=0)
 
@@ -341,7 +412,6 @@ def train_model(
     w_risky = min(total / (2 * n_risky + 1), 5.0)
     class_weights = torch.tensor([w_safe, w_risky], dtype=torch.float32).to(device)
     print(f"  Class weights: Safe={w_safe:.2f}, Risky={w_risky:.2f}")
-    sys.stdout.flush()
 
     in_channels = train_data[0].x.shape[1]
     model = SystRiskGCN(in_channels=in_channels).to(device)
@@ -396,44 +466,37 @@ def train_model(
                 f"  Epoch {epoch:3d}/{epochs} | Loss: {avg_loss:.4f} | "
                 f"Train Acc: {train_acc:.3f} | Val Acc: {val_acc:.3f}"
             )
-            sys.stdout.flush()
 
     if best_state is not None:
         model.load_state_dict(best_state)
     print(f"\n  Best Val Accuracy: {best_val_acc:.3f}")
 
-    # ── Final evaluation on validation set ────────────────────────────
     model.eval()
     all_preds = []
-    all_labels_list = []
+    all_labels = []
     with torch.no_grad():
         for batch in val_loader:
             batch = batch.to(device)
             logits = model(batch.x, batch.edge_index)
             pred = logits.argmax(dim=1)
             all_preds.append(pred.cpu().numpy())
-            all_labels_list.append(batch.y.cpu().numpy())
+            all_labels.append(batch.y.cpu().numpy())
 
     all_preds = np.concatenate(all_preds)
-    all_labels_arr = np.concatenate(all_labels_list)
+    all_labels = np.concatenate(all_labels)
 
     print("\n  Classification Report (Validation):")
     print(
         classification_report(
-            all_labels_arr, all_preds, target_names=["Safe", "Risky"], zero_division=0
+            all_labels, all_preds, target_names=["Safe", "Risky"], zero_division=0
         )
     )
 
-    cm = confusion_matrix(all_labels_arr, all_preds)
+    cm = confusion_matrix(all_labels, all_preds)
     print(f"  Confusion Matrix:\n{cm}")
-    sys.stdout.flush()
 
     return model
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Inference helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 def load_trained_model(
     model_path: str = None, in_channels: int = 7, device: str = "cpu"
@@ -474,6 +537,7 @@ def predict_risk(
         probs = F.softmax(logits, dim=1).cpu().numpy()
 
     risk_probs = probs[:, 1]
+
     risk_labels = np.where(risk_probs >= 0.5, "High Risk", "Low Risk")
 
     return {
@@ -483,27 +547,39 @@ def predict_risk(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Main
-# ═══════════════════════════════════════════════════════════════════════════
-
 def main():
     parser = argparse.ArgumentParser(description="ENCS GNN Risk Predictor Pipeline")
-    parser.add_argument("--runs", type=int, default=500, help="Number of MC runs for data gen")
+    parser.add_argument(
+        "--runs", type=int, default=500, help="Number of MC runs for data gen"
+    )
     parser.add_argument("--epochs", type=int, default=80, help="Training epochs")
-    parser.add_argument("--generate-only", action="store_true", help="Only generate data")
-    parser.add_argument("--train-only", action="store_true", help="Only train (requires existing data)")
-    parser.add_argument("--batch-size", type=int, default=4, help="Batch size for training")
+    parser.add_argument(
+        "--generate-only", action="store_true", help="Only generate data"
+    )
+    parser.add_argument(
+        "--train-only", action="store_true", help="Only train (requires existing data)"
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=4, help="Batch size for training"
+    )
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=f"Parallel workers (default: min(cpu_count, 12) = {min(mp.cpu_count(), 8)})",
+    )
     args = parser.parse_args()
 
     t_start = time.time()
 
     if not args.train_only:
-        dataset = generate_dataset(n_runs=args.runs, verbose=True)
+        dataset = generate_dataset(
+            n_runs=args.runs, n_workers=args.workers, verbose=True
+        )
 
         print(f"\n  Saving dataset to disk...")
-        sys.stdout.flush()
+        import sys; sys.stdout.flush()
         torch.save(dataset, str(DATASET_PATH))
         print(f"  Dataset saved: {DATASET_PATH}")
         sys.stdout.flush()
@@ -512,7 +588,9 @@ def main():
 
     if args.train_only:
         if not DATASET_PATH.exists():
-            print(f"ERROR: No dataset found at {DATASET_PATH}. Run with --generate-only first.")
+            print(
+                f"ERROR: No dataset found at {DATASET_PATH}. Run with --generate-only first."
+            )
             return
         dataset = torch.load(str(DATASET_PATH), weights_only=False)
         print(f"  Loaded dataset: {len(dataset)} graphs from {DATASET_PATH}")
@@ -524,7 +602,6 @@ def main():
     torch.save(model.state_dict(), str(MODEL_PATH))
     print(f"\n  Model saved: {MODEL_PATH}")
 
-    # ── Sanity check ──────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("SANITY CHECK — Inference on base network")
     print("=" * 60)
@@ -547,7 +624,7 @@ def main():
 
     total_time = time.time() - t_start
     print(f"\n  Total pipeline time: {total_time:.1f}s")
-    print("  DONE")
+    print("  DONE ✓")
 
 
 if __name__ == "__main__":
