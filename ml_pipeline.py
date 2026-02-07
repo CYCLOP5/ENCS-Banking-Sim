@@ -83,9 +83,17 @@ def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
     """
     Run the simulation `n_runs` times with random perturbations.
     Returns a list of PyG Data objects.
+
+    Runs are split into three regimes so the model sees genuine Safe labels:
+      - CALM   (35%): tiny severity, no margin spirals, low fire-sale α,
+                       small-bank triggers → most nodes survive.
+      - MODERATE (35%): medium severity, mild margins & fire-sales,
+                        mixed trigger pool → partial cascade.
+      - STRESSED (30%): high severity, full margins & fire-sales,
+                        top-connected triggers → mass default.
     """
     print("\n" + "=" * 60)
-    print(f"GNN DATA GENERATION — {n_runs} Monte Carlo runs")
+    print(f"GNN DATA GENERATION — {n_runs} Monte Carlo runs  (3 regimes)")
     print("=" * 60)
 
     W_sparse, df = sim.load_and_align_network()
@@ -95,24 +103,59 @@ def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
     edge_index_base = build_edge_index(W_base)
 
     out_strength = W_base.sum(axis=1)
-    top_trigger_pool = np.argsort(out_strength)[::-1][:min(30, n)]
+    rank = np.argsort(out_strength)[::-1]
+    pool_top30   = rank[:min(30, n)]                     
 
-    deriv_exposure = df['deriv_ir_notional'].fillna(0).values.copy() if 'deriv_ir_notional' in df.columns else np.zeros(n)
+    pool_mid     = rank[min(30, n):min(200, n)]          
+
+    pool_small   = rank[min(200, n):]                    
+
+    pool_all     = np.arange(n)
 
     rng = np.random.RandomState(seed=42)
     dataset = []
     t0 = time.time()
     label_counts = {0: 0, 1: 0}
+    regime_counts = {"calm": 0, "moderate": 0, "stressed": 0}
 
     for run_idx in range(n_runs):
 
+        r = rng.random()
+        if r < 0.35:
+            regime = "calm"
+        elif r < 0.70:
+            regime = "moderate"
+        else:
+            regime = "stressed"
+
         noise = 1.0 + rng.uniform(-noise_pct, noise_pct, size=W_base.shape)
         W_noisy = np.maximum(W_base * noise, 0.0)
-
         np.fill_diagonal(W_noisy, 0.0)
 
-        trigger_idx = int(rng.choice(top_trigger_pool))
-        severity = float(rng.uniform(0.05, 1.0))  
+        if regime == "calm":
+            trigger_idx = int(rng.choice(pool_small if len(pool_small) > 0 else pool_all))
+            severity    = float(rng.uniform(0.01, 0.10))
+            sigma       = rng.uniform(0.01, 0.03)
+            panic_th    = rng.uniform(0.30, 0.50)       
+
+            alpha       = rng.uniform(0.0005, 0.002)    
+
+            margin_sens = 0.0                            
+
+        elif regime == "moderate":
+            trigger_idx = int(rng.choice(pool_mid if len(pool_mid) > 0 else pool_all))
+            severity    = float(rng.uniform(0.05, 0.40))
+            sigma       = rng.uniform(0.03, 0.06)
+            panic_th    = rng.uniform(0.15, 0.30)
+            alpha       = rng.uniform(0.001, 0.004)
+            margin_sens = rng.uniform(0.0, 0.5)
+        else:  # stressed
+            trigger_idx = int(rng.choice(pool_top30))
+            severity    = float(rng.uniform(0.30, 1.0))
+            sigma       = rng.uniform(0.05, 0.10)
+            panic_th    = rng.uniform(0.05, 0.15)
+            alpha       = rng.uniform(0.004, 0.010)
+            margin_sens = rng.uniform(0.5, 2.0)
 
         state = sim.compute_state_variables(W_noisy, df)
 
@@ -120,10 +163,10 @@ def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
             results = sim.run_rust_intraday(
                 state, df, trigger_idx, severity,
                 n_steps=n_steps,
-                uncertainty_sigma=rng.uniform(0.03, 0.10),
-                panic_threshold=rng.uniform(0.05, 0.20),
-                alpha=rng.uniform(0.002, 0.010),
-                margin_sensitivity=rng.uniform(0.0, 2.0),
+                uncertainty_sigma=sigma,
+                panic_threshold=panic_th,
+                alpha=alpha,
+                margin_sensitivity=margin_sens,
                 distress_threshold=0.5,
             )
         except Exception as e:
@@ -140,6 +183,7 @@ def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
             y=torch.tensor(labels, dtype=torch.long),
         )
         dataset.append(data)
+        regime_counts[regime] += 1
 
         for lbl in labels:
             label_counts[int(lbl)] += 1
@@ -148,11 +192,16 @@ def generate_dataset(n_runs: int = 500, noise_pct: float = 0.10,
             elapsed = time.time() - t0
             rate = (run_idx + 1) / elapsed
             eta = (n_runs - run_idx - 1) / rate
+            frac_risky = label_counts[1] / max(label_counts[0] + label_counts[1], 1) * 100
             print(f"  [{run_idx+1}/{n_runs}] {rate:.1f} runs/sec | ETA {eta:.0f}s | "
-                  f"Safe={label_counts[0]:,} Risky={label_counts[1]:,}")
+                  f"Safe={label_counts[0]:,} Risky={label_counts[1]:,} ({frac_risky:.0f}%)"
+                  f" | calm={regime_counts['calm']} mod={regime_counts['moderate']}"
+                  f" stress={regime_counts['stressed']}")
 
     elapsed = time.time() - t0
     print(f"\n  Generated {len(dataset)} graphs in {elapsed:.1f}s")
+    print(f"  Regimes: calm={regime_counts['calm']}, moderate={regime_counts['moderate']}, "
+          f"stressed={regime_counts['stressed']}")
     print(f"  Label distribution: Safe={label_counts[0]:,}  Risky={label_counts[1]:,}")
     total = label_counts[0] + label_counts[1]
     if total > 0:

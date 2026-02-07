@@ -224,7 +224,7 @@ def main():
         distress_thresh = st.slider("Distress Threshold", 0.0, 1.0, 0.95)
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("## \U0001F9E0 Rust Intraday Engine")
+    st.sidebar.markdown("##  Rust Intraday Engine")
     rust_badge = "\u26a1 Rust" if sim.RUST_AVAILABLE else "\U0001f40d Python fallback"
     st.sidebar.caption(f"Backend: {rust_badge}")
     intraday_mode = st.sidebar.checkbox("Enable Intraday Mode", value=False,
