@@ -11,7 +11,7 @@ from climate_risk import assign_climate_exposure, run_transition_shock
 
 try:
     import torch
-    from ml_pipeline import load_trained_model, predict_risk, build_node_features, build_edge_index
+    from ml_pipeline import load_trained_model, predict_risk
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
@@ -267,12 +267,12 @@ def main():
     elif not GNN_MODEL_PATH.exists():
         st.sidebar.info("No trained model found. Run:\n`python ml_pipeline.py`")
     else:
-        st.sidebar.caption("GCN model trained on Monte Carlo simulations")
+        st.sidebar.caption("PNA model trained on Monte Carlo simulations")
         predict_button = st.sidebar.button("\U0001f52e PREDICT RISK", use_container_width=True)
         if predict_button:
             with st.spinner("Running GNN inference..."):
                 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-                model = load_trained_model(str(GNN_MODEL_PATH), in_channels=7, device=device)
+                model = load_trained_model(str(GNN_MODEL_PATH), device=device)
                 model = model.to(device)
                 ai_pred = predict_risk(model, W_dense, df, device=device)
                 st.session_state.ai_predictions = ai_pred

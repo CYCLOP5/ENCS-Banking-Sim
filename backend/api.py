@@ -21,7 +21,7 @@ from climate_risk import assign_climate_exposure, run_transition_shock
 
 try:
     import torch
-    from ml_pipeline import load_trained_model, predict_risk, build_node_features, build_edge_index
+    from ml_pipeline import load_trained_model, predict_risk
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
@@ -203,11 +203,9 @@ async def get_banks():
         risk_scores = np.zeros(len(df_enriched))
         if ML_AVAILABLE and GNN_MODEL_PATH.exists():
             try:
-                model = load_trained_model(GNN_MODEL_PATH, in_channels=7)
-                X = build_node_features(W_dense, df_enriched)
-                edge_index = build_edge_index(W_dense)
-                probs = predict_risk(model, X, edge_index)
-                risk_scores = probs
+                model = load_trained_model(str(GNN_MODEL_PATH))
+                result = predict_risk(model, W_dense, df_enriched)
+                risk_scores = result["risk_scores"]
             except Exception:
                 pass
 
@@ -360,17 +358,15 @@ async def get_gnn_risk():
         raise HTTPException(status_code=503, detail="ML dependencies not available")
     try:
         W_dense, df = _load_network()
-        model = load_trained_model(GNN_MODEL_PATH, in_channels=7)
-        X = build_node_features(W_dense, df)
-        edge_index = build_edge_index(W_dense)
-        probs = predict_risk(model, X, edge_index)
+        model = load_trained_model(str(GNN_MODEL_PATH))
+        result = predict_risk(model, W_dense, df)
 
         scores = []
         for i, row in df.iterrows():
             scores.append({
                 "id": int(i),
                 "name": str(row["bank_name"]),
-                "risk_score": float(probs[i]),
+                "risk_score": float(result["risk_scores"][i]),
             })
 
         return {"scores": scores}
