@@ -1,0 +1,12 @@
+{
+  "trigger_bank": "5493006QMFDDMYWIAM13_ES",
+  "trigger_id": "5493006QMFDDMYWIAM13",
+  "loss_severity": 1.0,
+  "converged": true,
+  "iterations": 2,
+  "n_defaults": 1.0,
+  "secondary_defaults": 0,
+  "n_distressed": 0.0,
+  "n_safe": 4554.0,
+  "total_capital_lost": -50838482040030.43
+}

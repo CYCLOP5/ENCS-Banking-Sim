@@ -5,6 +5,15 @@ __pycache__/
 
 # C extensions
 *.so
+# Ignore everything in data
+data/*
+
+# But keep output folder
+!data/output/
+!data/output/**
+
+# Ignore zips completely
+zips/
 
 # Distribution / packaging
 .Python
