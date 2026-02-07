@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   Users,
+  Square,
 } from "lucide-react";
 import GlassPanel from "./GlassPanel";
 import { cn, formatUSD } from "../lib/utils";
@@ -204,7 +205,13 @@ function MechanicalDetail({ results }) {
         />
         <StatCard
           label="Asset Price"
-          value={results.final_asset_price ? `${(results.final_asset_price * 100).toFixed(1)}%` : "100%"}
+          value={
+            results.final_asset_price !== undefined
+              ? (results.final_asset_price * 100 < 0.1 && results.final_asset_price > 0
+                  ? "< 0.1%"
+                  : `${(results.final_asset_price * 100).toFixed(1)}%`)
+              : "100%"
+          }
           icon={TrendingDown}
           color={
             (results.final_asset_price ?? 1) < 0.9 ? "text-crisis-red" : "text-stability-green"
@@ -223,6 +230,19 @@ function MechanicalDetail({ results }) {
           color="text-text-secondary"
         />
       </div>
+
+      {/* Circuit Breaker Alert */}
+      {results.circuit_breaker_triggered && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+          <Square className="h-4 w-4 text-amber-400" />
+          <span className="text-xs font-[family-name:var(--font-mono)] text-amber-400 font-bold uppercase tracking-wider">
+            Circuit Breaker Triggered
+          </span>
+          <span className="text-[10px] text-amber-400/70 font-[family-name:var(--font-mono)]">
+            — trading halted at step {results.circuit_breaker_step}, preventing further cascade
+          </span>
+        </div>
+      )}
 
       {/* ── Status Distribution ── */}
       <Section title="Bank Status Distribution" icon={BarChart3}>

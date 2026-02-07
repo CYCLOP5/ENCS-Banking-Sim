@@ -25,6 +25,7 @@ import {
   Bomb,
   Building2,
   CircleDot,
+  ShieldAlert,
 } from "lucide-react";
 import GlassPanel from "../components/GlassPanel";
 import katex from "katex";
@@ -294,6 +295,17 @@ const TERMS = [
     technical:
       "The vector p* that satisfies limited liability (p_i \\leq L_i) and absolute priority (equity is residual). It represents the unique greatest fixed-point of the clearing map, computed via Picard iteration until convergence.",
     math: "p^*_i = \\min(\\bar{p}_i,\\; e_i + (\\Pi^\\top p^*)_i) \\quad \\forall i",
+  },
+  {
+    id: "circuit-breaker",
+    title: "Circuit Breaker (Trading Halt)",
+    category: "Regulation",
+    icon: ShieldAlert,
+    simple:
+      'An emergency stop button for the market. When prices crash too fast, trading halts completely — preventing a total wipeout by giving the system time to breathe.',
+    technical:
+      "A hard halt mechanism that freezes all liquidations, margin calls, and fire-sale activity when the global asset price drops below a configurable floor (e.g. 15% from par). Implemented in both the Rust core and Python fallback engines. Remaining intraday steps record zero volume, preserving the halted state in timeline data.",
+    math: "P_t \\leq P_0(1 - \\delta_{\\text{CB}}) \\;\\Longrightarrow\\; V_{t'} = 0 \\;\\forall\\, t' \\geq t",
   },
 ];
 

@@ -299,7 +299,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                       max_iterations: int = DEFAULT_MAX_ITERATIONS,
                       convergence_threshold: float = DEFAULT_CONVERGENCE_THRESHOLD,
                       distress_threshold: float = DEFAULT_DISTRESS_THRESHOLD,
-                      margin_sensitivity: float = 1.0) -> dict:
+                      margin_sensitivity: float = 1.0,
+                      circuit_breaker_threshold: float = 0.0) -> dict:
     """
     LAYER 4 — RUST INTRADAY ENGINE: Exponential fire sales + discrete time steps.
 
@@ -334,6 +335,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
     print(f"  α (fire-sale): {alpha}")
     print(f"  Margin sens:   {margin_sensitivity}")
     print(f"  Deriv exposure: ${derivatives_exposure.sum() / 1e12:.2f}T")
+    if circuit_breaker_threshold > 0:
+        print(f"  Circuit breaker: {circuit_breaker_threshold:.0%} drop")
 
     if RUST_AVAILABLE:
         print("  Delegating to Rust core...")
@@ -353,6 +356,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             convergence_tol=convergence_threshold,
             distress_threshold=distress_threshold,
             margin_sensitivity=margin_sensitivity,
+            circuit_breaker_threshold=circuit_breaker_threshold,
         )
 
         results = {
@@ -377,6 +381,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             'gridlock_timeline': result_dict['gridlock_timeline'],
             'equity_loss_timeline': result_dict['equity_loss_timeline'],
             'margin_calls_timeline': result_dict['margin_calls_timeline'],
+            'circuit_breaker_triggered': result_dict.get('circuit_breaker_triggered', False),
+            'circuit_breaker_step': result_dict.get('circuit_breaker_step', None),
         }
 
     else:
@@ -394,8 +400,37 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
         gridlock_timeline = []
         equity_loss_timeline = []
         margin_calls_timeline = []
+        cb_triggered = False
+        cb_step = None
+        cb_floor = 1.0 - circuit_breaker_threshold if circuit_breaker_threshold > 0 else 0.0
 
         for t in range(1, n_steps + 1):
+
+            # ── Circuit Breaker: if price has hit the floor, halt all trading ──
+            if cb_floor > 0 and asset_price <= cb_floor:
+                if not cb_triggered:
+                    cb_triggered = True
+                    cb_step = t
+                    print(f"  ⛔ CIRCUIT BREAKER TRIGGERED at step {t}  "
+                          f"(price {asset_price:.4f} <= floor {cb_floor:.4f})")
+                # Price is frozen, no new withdrawals or fire sales
+                price_timeline.append(float(asset_price))
+                equity = total_assets - total_liabilities
+                n_def = int(np.sum(equity < 0))
+                equity_ratio = np.where(
+                    state['equity'] > 0,
+                    equity / np.maximum(state['equity'], 1e-12),
+                    1.0
+                )
+                n_dis = int(np.sum((equity_ratio < distress_threshold) & (equity >= 0)))
+                eq_loss = float(np.sum(np.abs(equity[equity < 0])))
+                defaults_timeline.append(n_def)
+                distressed_timeline.append(n_dis)
+                withdrawn_timeline.append(0.0)
+                gridlock_timeline.append(0)
+                equity_loss_timeline.append(eq_loss)
+                margin_calls_timeline.append(0.0)
+                continue
 
             solvency = np.where(total_assets > 0,
                                 (total_assets - total_liabilities) / total_assets, 0.0)
@@ -522,6 +557,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             'gridlock_timeline': gridlock_timeline,
             'equity_loss_timeline': equity_loss_timeline,
             'margin_calls_timeline': margin_calls_timeline,
+            'circuit_breaker_triggered': cb_triggered,
+            'circuit_breaker_step': cb_step,
         }
 
     print(f"\n  === RESULTS ===")
@@ -531,6 +568,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
     print(f"  Defaults:     {results['n_defaults']}")
     print(f"  Distressed:   {results['n_distressed']}")
     print(f"  Capital Lost: ${results['equity_loss'] / 1e12:.2f}T")
+    if results.get('circuit_breaker_triggered'):
+        print(f"  ⛔ Circuit breaker halted trading at step {results['circuit_breaker_step']}")
 
     return results
 

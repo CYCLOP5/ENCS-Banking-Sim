@@ -343,7 +343,8 @@ fn run_intraday_step(
                      trigger_idx, severity, n_steps=10, sigma=0.05,
                      panic_threshold=0.10, alpha=0.005,
                      max_clearing_iter=100, convergence_tol=1e-5,
-                     distress_threshold=0.5, margin_sensitivity=1.0))]
+                     distress_threshold=0.5, margin_sensitivity=1.0,
+                     circuit_breaker_threshold=0.0))]
 fn run_full_simulation(
     py: Python<'_>,
     w: PyReadonlyArray2<f64>,
@@ -361,6 +362,7 @@ fn run_full_simulation(
     convergence_tol: f64,
     distress_threshold: f64,
     margin_sensitivity: f64,
+    circuit_breaker_threshold: f64,
 ) -> PyResult<Py<PyDict>> {
 
     let mut state = NetworkState::new(w, external_assets, total_liabilities, total_assets, derivatives_exposure);
@@ -371,8 +373,46 @@ fn run_full_simulation(
     apply_shock(&mut state, trigger_idx, severity);
 
     let mut step_results: Vec<StepResult> = Vec::with_capacity(n_steps);
+    let cb_floor = if circuit_breaker_threshold > 0.0 { 1.0 - circuit_breaker_threshold } else { 0.0 };
+    let mut cb_triggered = false;
+    let mut cb_step: usize = 0;
 
     for t in 1..=n_steps {
+        // ── Circuit Breaker: if price has hit the floor, halt all trading ──
+        if cb_floor > 0.0 && state.asset_price <= cb_floor {
+            if !cb_triggered {
+                cb_triggered = true;
+                cb_step = t;
+            }
+            // Frozen step — no new withdrawals, price stays flat
+            let n = state.n;
+            let mut n_def: usize = 0;
+            let mut n_dis: usize = 0;
+            let mut eq_loss = 0.0_f64;
+            for i in 0..n {
+                if state.equity[i] < 0.0 {
+                    n_def += 1;
+                    eq_loss += state.equity[i].abs();
+                } else if initial_equity_arr[i] > 0.0
+                    && (state.equity[i] / initial_equity_arr[i]) < distress_threshold
+                {
+                    n_dis += 1;
+                }
+            }
+            step_results.push(StepResult {
+                t,
+                asset_price: state.asset_price,
+                n_defaults: n_def,
+                n_distressed: n_dis,
+                total_withdrawn: 0.0,
+                fire_sale_volume: 0.0,
+                failed_payments: 0,
+                total_equity_loss: eq_loss,
+                margin_calls_total: 0.0,
+            });
+            continue;
+        }
+
         let result = run_intraday_step_impl(
             &mut state,
             t,
@@ -439,6 +479,12 @@ fn run_full_simulation(
     dict.set_item("gridlock_timeline", gridlock_timeline)?;
     dict.set_item("equity_loss_timeline", equity_loss_timeline)?;
     dict.set_item("margin_calls_timeline", margin_calls_timeline)?;
+    dict.set_item("circuit_breaker_triggered", cb_triggered)?;
+    if cb_triggered {
+        dict.set_item("circuit_breaker_step", cb_step)?;
+    } else {
+        dict.set_item("circuit_breaker_step", py.None())?;
+    }
 
     Ok(dict.into())
 }

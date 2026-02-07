@@ -54,6 +54,8 @@ export function runSimulation(params = {}) {
       use_ccp: params.useCcp ?? false,
       clearing_rate: params.clearingRate ?? 0.5,
       default_fund_ratio: params.defaultFundRatio ?? 0.05,
+      circuit_breaker_enabled: params.circuitBreakerEnabled ?? false,
+      circuit_breaker_threshold: params.circuitBreakerThreshold ?? 0.15,
     }),
   });
 }
@@ -70,6 +72,8 @@ export function runClimate(params = {}) {
       trigger_idx: params.triggerIdx ?? 0,
       severity: params.severity ?? 1.0,
       n_steps: params.nSteps ?? 10,
+      circuit_breaker_enabled: params.circuitBreakerEnabled ?? false,
+      circuit_breaker_threshold: params.circuitBreakerThreshold ?? 0.15,
     }),
   });
 }

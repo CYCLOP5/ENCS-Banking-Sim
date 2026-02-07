@@ -130,6 +130,7 @@ def run_transition_shock(
     max_iterations: int = 100,
     convergence_threshold: float = 1e-5,
     distress_threshold: float = 0.50,
+    circuit_breaker_threshold: float = 0.0,
 ) -> Dict:
     """
     Simulate a Green Swan transition shock and propagate via the network.
@@ -242,6 +243,7 @@ def run_transition_shock(
             convergence_threshold=convergence_threshold,
             distress_threshold=distress_threshold,
             margin_sensitivity=margin_sensitivity,
+            circuit_breaker_threshold=circuit_breaker_threshold,
         )
     else:
         results = sim.run_scenario(

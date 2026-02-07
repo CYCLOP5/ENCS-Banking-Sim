@@ -127,6 +127,9 @@ class SimulationRequest(BaseModel):
     panic_rate: float = Field(0.10, ge=0, le=0.50)
     fire_sale_alpha: float = Field(0.005, ge=0, le=0.05)
     margin_multiplier: float = Field(1.0, ge=0, le=5)
+    # Circuit breaker
+    circuit_breaker_enabled: bool = False
+    circuit_breaker_threshold: float = Field(0.15, ge=0.01, le=0.50)
     # CCP
     use_ccp: bool = False
     clearing_rate: float = Field(0.5, ge=0, le=1)
@@ -140,6 +143,8 @@ class ClimateRequest(BaseModel):
     trigger_idx: int = 0
     severity: float = Field(1.0, ge=0, le=1)
     n_steps: int = Field(10, ge=1, le=50)
+    circuit_breaker_enabled: bool = False
+    circuit_breaker_threshold: float = Field(0.15, ge=0.01, le=0.50)
 
 
 class GameRequest(BaseModel):
@@ -367,6 +372,7 @@ async def run_simulation(req: SimulationRequest):
                 max_iterations=req.max_iter,
                 convergence_threshold=req.tolerance,
                 distress_threshold=req.distress_threshold,
+                circuit_breaker_threshold=req.circuit_breaker_threshold if req.circuit_breaker_enabled else 0.0,
             )
         else:
             results = sim.run_scenario(
@@ -401,6 +407,7 @@ async def run_climate(req: ClimateRequest):
             green_subsidy=req.green_subsidy,
             use_intraday=req.use_intraday,
             n_steps=req.n_steps,
+            circuit_breaker_threshold=req.circuit_breaker_threshold if req.circuit_breaker_enabled else 0.0,
         )
 
         results["bank_names"] = df["bank_name"].tolist()

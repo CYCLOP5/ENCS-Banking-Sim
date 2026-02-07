@@ -493,6 +493,29 @@ if RUST_AVAILABLE:
                        additional liquidations can trigger outsized price drops.
                     </p>
                  </div>
+
+                 <div className="mt-6 p-4 bg-amber-500/5 rounded-lg border border-amber-500/20">
+                    <h4 className="font-mono text-sm text-amber-400 mb-2">Circuit Breaker (Trading Halt)</h4>
+                    <p className="text-sm text-text-secondary mb-3">
+                       When the global asset price drops below a configurable threshold{" "}
+                       <Tex>{"\\delta_{\\text{CB}}"}</Tex>, the engine triggers a <strong className="text-amber-400">hard halt</strong>:
+                       all liquidations, margin calls, and fire-sale volume are frozen for
+                       the remaining intraday steps.
+                    </p>
+                    <pre className="bg-void/60 p-3 rounded text-xs text-text-secondary overflow-x-auto font-mono">
+{`# Circuit Breaker check (runs at top of each step)
+cb_floor = 1.0 - circuit_breaker_threshold
+if asset_price <= cb_floor:
+    # HALT — no new withdrawals, price frozen
+    cb_triggered = True
+    continue`}
+                    </pre>
+                    <p className="text-xs text-text-muted mt-2">
+                       Implemented identically in both the Rust core and the Python fallback.
+                       When triggered, timeline data flatlines — making the halt clearly
+                       visible in the dashboard visualization.
+                    </p>
+                 </div>
               </GlassPanel>
 
               {/* Game Theory Section */}

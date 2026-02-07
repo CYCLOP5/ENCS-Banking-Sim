@@ -209,6 +209,9 @@ export default function Simulation() {
   const [marginMultiplier, setMarginMultiplier] = useState(1.0);
   const [defaultFundRatio, setDefaultFundRatio] = useState(0.05);
   const [useIntraday, setUseIntraday] = useState(true);
+  // Circuit Breaker
+  const [circuitBreakerEnabled, setCircuitBreakerEnabled] = useState(false);
+  const [circuitBreakerThreshold, setCircuitBreakerThreshold] = useState(0.15);
   // Climate
   const [carbonTax, setCarbonTax] = useState(0.5);
   const [greenSubsidy, setGreenSubsidy] = useState(0.1);
@@ -564,6 +567,8 @@ export default function Simulation() {
           triggerIdx,
           severity,
           nSteps,
+          circuitBreakerEnabled,
+          circuitBreakerThreshold,
         });
       } else if (tab === "strategic") {
         res = await runGame({
@@ -594,6 +599,8 @@ export default function Simulation() {
           useCcp,
           clearingRate,
           defaultFundRatio,
+          circuitBreakerEnabled,
+          circuitBreakerThreshold,
         });
       }
       setResults(res);
@@ -608,6 +615,7 @@ export default function Simulation() {
     carbonTax, greenSubsidy, climateUseIntraday,
     gameSolvency, gameNBanks, gameNSteps, gameInterestRate, gameRecoveryRate,
     gameRiskAversion, gameNoiseStd, gameHaircut, gameMarginPressure, gameExposure,
+    circuitBreakerEnabled, circuitBreakerThreshold,
   ]);
 
   // ── Timeline chart data ──
@@ -876,6 +884,31 @@ export default function Simulation() {
                     </div>
                   )}
                 </div>
+
+                <div className="border-t border-border pt-3">
+                  <Toggle
+                    label="Circuit Breaker"
+                    checked={circuitBreakerEnabled}
+                    onChange={setCircuitBreakerEnabled}
+                    description="Halt trading when price drops below threshold"
+                  />
+                  {circuitBreakerEnabled && (
+                    <div className="mt-3 space-y-3">
+                      <Slider
+                        label="Halt Threshold"
+                        value={circuitBreakerThreshold}
+                        onChange={setCircuitBreakerThreshold}
+                        min={0.05}
+                        max={0.50}
+                        step={0.01}
+                        suffix="%"
+                      />
+                      <p className="text-[10px] text-text-muted font-[family-name:var(--font-mono)]">
+                        Trading halts if asset price drops {(circuitBreakerThreshold * 100).toFixed(0)}% from par
+                      </p>
+                    </div>
+                  )}
+                </div>
               </motion.div>
             )}
 
@@ -1138,8 +1171,10 @@ export default function Simulation() {
                   <MetricCard
                     label="Asset Price"
                     value={
-                      results.final_asset_price
-                        ? `${(results.final_asset_price * 100).toFixed(1)}%`
+                      results.final_asset_price !== undefined
+                        ? (results.final_asset_price * 100 < 0.1 && results.final_asset_price > 0
+                            ? "< 0.1%"
+                            : `${(results.final_asset_price * 100).toFixed(1)}%`)
                         : "100%"
                     }
                     prefix=""
@@ -1151,6 +1186,19 @@ export default function Simulation() {
                     }
                   />
                 </div>
+
+                {/* Circuit Breaker Alert */}
+                {results.circuit_breaker_triggered && (
+                  <div className="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                    <Square className="h-4 w-4 text-amber-400" />
+                    <span className="text-xs font-[family-name:var(--font-mono)] text-amber-400 font-bold uppercase tracking-wider">
+                      Circuit Breaker Triggered
+                    </span>
+                    <span className="text-[10px] text-amber-400/70 font-[family-name:var(--font-mono)]">
+                      — trading halted at step {results.circuit_breaker_step}
+                    </span>
+                  </div>
+                )}
 
                 {/* Timeline chart */}
                 {timelineData.length > 1 && (

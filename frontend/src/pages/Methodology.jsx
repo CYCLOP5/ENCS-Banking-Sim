@@ -6,6 +6,7 @@ import {
   Gamepad2,
   CloudLightning,
   ArrowDown,
+  ShieldAlert,
 } from "lucide-react";
 import GlassPanel from "../components/GlassPanel";
 import katex from "katex";
@@ -167,6 +168,30 @@ export default function Methodology() {
                 is forced to <b className="text-crisis-red">liquidate assets</b>, driving
                 prices further down and triggering additional margin calls across the
                 network — a self-reinforcing liquidity spiral.
+              </p>
+            </div>
+
+            <div className="mt-6 glass rounded-lg p-4 border border-amber-500/10">
+              <h4 className="text-sm font-bold text-amber-400 font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3 flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4" /> Circuit Breaker (Trading Halt)
+              </h4>
+              <p className="text-text-secondary text-sm leading-relaxed mb-3">
+                Real-world exchanges employ <b className="text-white">circuit breakers</b> that
+                halt trading when prices drop beyond a threshold in a single session.
+                ENCS implements this as a <b className="text-white">hard halt</b>: when the
+                global asset price falls below the floor, all liquidations freeze for
+                the remaining intraday steps.
+              </p>
+              <TexBlock>
+                {"P_t \\leq P_0 \\cdot (1 - \\delta_{\\text{CB}}) \\;\\Longrightarrow\\; V_{t'} = 0 \\quad \\forall\\, t' \\geq t"}
+              </TexBlock>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                Where <Tex>{"\\delta_{\\text{CB}}"}</Tex> is the configurable halt threshold
+                (e.g. 15%). This demonstrates a key regulatory design insight: circuit
+                breakers <b className="text-stability-green">prevent total collapse</b> by
+                interrupting the self-reinforcing fire-sale spiral, at the cost of
+                temporarily freezing liquidity. The A/B comparison — with and without
+                the breaker — quantifies exactly how much systemic damage the halt prevents.
               </p>
             </div>
           </GlassPanel>
@@ -427,6 +452,10 @@ export default function Methodology() {
             </p>
             <p>
               Bolton, P. et al. (2020). "The Green Swan." BIS / Banque de France.
+            </p>
+            <p>
+              Greenwald, B. & Stein, J. (1991). "Transactional Risk, Market
+              Crashes, and the Role of Circuit Breakers." <i>Journal of Business</i>, 64(4).
             </p>
           </div>
         </FadeIn>
