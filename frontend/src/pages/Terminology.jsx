@@ -105,8 +105,8 @@ const TERMS = [
     simple:
       "An AI that looks at the spiderweb of bank connections to predict who will fail before it happens — like a financial early warning radar.",
     technical:
-      "A 3-layer Graph Convolutional Network (GCN) that aggregates neighbor features. It learns non-linear patterns in leverage and interbank exposure to predict binary risk probabilities for each node.",
-    math: "H^{(l+1)} = \\sigma\\!\\bigl(\\tilde{D}^{-\\frac{1}{2}} \\tilde{A} \\tilde{D}^{-\\frac{1}{2}} H^{(l)} W^{(l)}\\bigr)",
+      "An edge-aware PNA model with multiple aggregators and degree scalers. It predicts continuous risk-frequency scores (0–1) rather than binary labels.",
+    math: "\\mathbf{h}_i^{(l+1)} = \\sigma\\!\\Big( \\Vert_{a \\in \\mathcal{A}} \\text{AGG}_a(\\mathcal{N}(i)) \\Big)",
   },
   {
     id: "morris-shin",
@@ -246,10 +246,10 @@ const TERMS = [
     category: "AI",
     icon: Dices,
     simple:
-      'Roll the dice 500 times with different disasters, record what happens each time, and train an AI on the results. The more chaos you simulate, the smarter the AI gets.',
+      'Roll the dice many times with different disasters, record what happens each time, and train an AI on the results. The more chaos you simulate, the smarter the AI gets.',
     technical:
-      "Stochastic simulation across 500 runs with 3-regime sampling (Calm 20%, Moderate 35%, Stressed 45%). Random perturbations to topology, trigger selection, and severity generate diverse training graphs for the GCN.",
-    math: "\\hat{P}(\\text{default}) = \\frac{1}{N} \\sum_{k=1}^{N} \\mathbb{1}[\\text{bank}_i \\in \\mathcal{D}_k]",
+      "Stochastic simulation across multiple runs with balanced regime sampling. Runs are aggregated into a single graph where y_i is the frequency a bank is risky.",
+    math: "\\hat{p}_i = \\frac{1}{N} \\sum_{k=1}^{N} \\mathbb{1}[\\text{bank}_i \\in \\mathcal{D}_k]",
   },
   {
     id: "greenwashing",

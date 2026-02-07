@@ -105,7 +105,7 @@ export default function Landing() {
           >
             Map the invisible fault-lines in global banking.
             Simulate cascading failures across{" "}
-            <span className="text-stability-green font-medium">500+ institutions</span>,
+            <span className="text-stability-green font-medium">4,500+ institutions</span>,
             predict contagion with{" "}
             <span className="text-data-blue font-medium">Graph Neural Networks</span>,
             and stress-test against{" "}
@@ -158,9 +158,9 @@ export default function Landing() {
       <section className="relative border-y border-border bg-void-light/50">
         <div className="mx-auto grid max-w-6xl grid-cols-2 md:grid-cols-4 divide-x divide-border">
           {[
-            { value: "500+", label: "Banks Modeled", icon: Shield },
+            { value: "4,500+", label: "Banks Modeled", icon: Shield },
             { value: "24T", label: "Interbank Volume", icon: TrendingDown },
-            { value: "7-dim", label: "GNN Feature Space", icon: BrainCircuit },
+            { value: "13-dim", label: "PNA Feature Space", icon: BrainCircuit },
             { value: "<1s", label: "Rust Simulation", icon: Zap },
           ].map(({ value, label, icon: Icon }, i) => (
             <FadeUp key={label} delay={i * 0.1}>
@@ -207,7 +207,7 @@ export default function Landing() {
             <FeatureCard
               icon={BrainCircuit}
               title="Graph Neural Network"
-              description="7-dimensional node features trained on 500 Monte Carlo scenarios. Predicts bank risk scores from topology + balance-sheet signals."
+              description="Edge-aware PNA with 13-dimensional features and Monte Carlo aggregation. Predicts risk frequency scores from topology + balance-sheet signals."
               color="blue"
               delay={0.1}
             />

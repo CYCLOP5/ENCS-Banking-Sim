@@ -1,0 +1,23 @@
+artifact_path: /home/smayan/Datathon/lowertaperfade-datahack-2026/backend/mlruns/1/models/m-0e6217bdcddc45fb99219d5350579618/artifacts
+flavors:
+  python_function:
+    config:
+      device: null
+    data: data
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.pytorch
+    pickle_module_name: mlflow.pytorch.pickle_module
+    python_version: 3.11.14
+  pytorch:
+    code: null
+    model_data: data
+    pytorch_version: 2.5.1
+mlflow_version: 3.9.0
+model_id: m-0e6217bdcddc45fb99219d5350579618
+model_size_bytes: 5236570
+model_uuid: m-0e6217bdcddc45fb99219d5350579618
+prompts: null
+run_id: 5e78918588d947f99db90bdc0522d36e
+utc_time_created: '2026-02-07 19:35:25.893381'

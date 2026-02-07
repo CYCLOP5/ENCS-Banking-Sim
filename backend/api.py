@@ -14,19 +14,51 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import traceback
+import os
+import logging
+import ctypes as _ctypes
 
 import simulation_engine as sim
 from strategic_model import run_game_simulation
 from climate_risk import assign_climate_exposure, run_transition_shock
 
-try:
-    import torch
-    from ml_pipeline import load_trained_model, predict_risk, build_node_features, build_edge_index
-    ML_AVAILABLE = True
-except ImportError:
-    ML_AVAILABLE = False
-
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Workaround: some PyTorch builds require Intel ITT JIT profiling symbols
+# (e.g., iJIT_NotifyEvent) at dynamic link time. If a stub shared library
+# exists, preload it with RTLD_GLOBAL *before* importing torch.
+# ---------------------------------------------------------------------------
+def _preload_itt_stub() -> str | None:
+    candidates = [
+        os.environ.get("ENCS_ITT_STUB_PATH"),
+        os.environ.get("ITT_NOTIFY_STUB"),
+        str(Path(__file__).parent / "libittnotify_stub.so"),
+    ]
+    for stub_path in candidates:
+        if stub_path and os.path.isfile(stub_path):
+            try:
+                _ctypes.CDLL(stub_path, mode=getattr(_ctypes, "RTLD_GLOBAL", 0))
+                return stub_path
+            except Exception:
+                continue
+    return None
+
+
+ML_AVAILABLE = False
+ML_ERROR: str | None = None
+_ITT_STUB_USED = None
+
+try:
+    _ITT_STUB_USED = _preload_itt_stub()
+    import torch
+    from ml_pipeline import load_trained_model, predict_risk
+    ML_AVAILABLE = True
+except Exception as exc:
+    ML_AVAILABLE = False
+    ML_ERROR = f"{type(exc).__name__}: {exc}"
 
 GNN_MODEL_PATH = Path(__file__).parent / "gnn_model.pth"
 
@@ -49,6 +81,24 @@ app.add_middleware(
 # ── Cached network data ───────────────────────────────────────────────────
 
 _cache: Dict[str, Any] = {}
+
+
+def _get_cached_model():
+    if "gnn_model" in _cache:
+        return _cache["gnn_model"]
+    if not ML_AVAILABLE:
+        return None
+    if not GNN_MODEL_PATH.exists():
+        _cache["gnn_model_error"] = f"Model not found at {GNN_MODEL_PATH}"
+        return None
+    try:
+        model = load_trained_model(str(GNN_MODEL_PATH))
+        _cache["gnn_model"] = model
+        return model
+    except Exception as exc:
+        _cache["gnn_model_error"] = f"{type(exc).__name__}: {exc}"
+        logger.exception("Failed to load GNN model")
+        return None
 
 
 def _load_network():
@@ -132,23 +182,30 @@ def _clean_results(d: dict) -> dict:
     out = {}
     for k, v in d.items():
         if isinstance(v, np.ndarray):
-            flat = v.tolist()
-            if isinstance(flat, list):
-                out[k] = _sanitize_list(flat)
-            else:
-                out[k] = _sanitize_float(flat)
+            v_safe = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+            out[k] = v_safe.tolist()
         elif isinstance(v, dict):
             out[k] = _clean_results(v)
         elif isinstance(v, (np.integer,)):
             out[k] = int(v)
         elif isinstance(v, (np.floating,)):
-            out[k] = _sanitize_float(float(v))
-        elif isinstance(v, float):
-            out[k] = _sanitize_float(v)
-        elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], np.ndarray):
-            out[k] = [_sanitize_list(x.tolist()) for x in v]
+            out[k] = float(v) if np.isfinite(v) else 0.0
         elif isinstance(v, list):
-            out[k] = _sanitize_list(v)
+            cleaned_list = []
+            for item in v:
+                if isinstance(item, np.ndarray):
+                    cleaned_list.append(
+                        np.nan_to_num(item, nan=0.0, posinf=0.0, neginf=0.0).tolist()
+                    )
+                elif isinstance(item, (np.floating, float)):
+                    cleaned_list.append(float(item) if np.isfinite(item) else 0.0)
+                elif isinstance(item, (np.integer, int)):
+                    cleaned_list.append(int(item))
+                elif isinstance(item, dict):
+                    cleaned_list.append(_clean_results(item))
+                else:
+                    cleaned_list.append(item)
+            out[k] = cleaned_list
         elif k == "agents":
             # Skip non-serialisable agent objects
             continue
@@ -161,7 +218,15 @@ def _clean_results(d: dict) -> dict:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "ml_available": ML_AVAILABLE}
+    model_error = _cache.get("gnn_model_error")
+    return {
+        "status": "ok",
+        "ml_available": ML_AVAILABLE,
+        "ml_error": ML_ERROR or model_error,
+        "itt_stub": _ITT_STUB_USED,
+        "model_path": str(GNN_MODEL_PATH),
+        "model_exists": GNN_MODEL_PATH.exists(),
+    }
 
 
 @app.get("/api/topology")
@@ -240,13 +305,14 @@ async def get_banks():
 
         # GNN risk scores
         risk_scores = np.zeros(len(df_enriched))
-        if ML_AVAILABLE and GNN_MODEL_PATH.exists():
-            try:
-                model = load_trained_model(GNN_MODEL_PATH, in_channels=7)
-                pred = predict_risk(model, W_dense, df_enriched)
-                risk_scores = pred["risk_probs"]
-            except Exception:
-                pass
+        if ML_AVAILABLE:
+            model = _get_cached_model()
+            if model is not None:
+                try:
+                    result = predict_risk(model, W_dense, df_enriched)
+                    risk_scores = result["risk_scores"]
+                except Exception:
+                    logger.exception("Risk prediction failed")
 
         banks = []
         for i, row in df_enriched.iterrows():
@@ -390,16 +456,15 @@ async def get_gnn_risk():
         raise HTTPException(status_code=503, detail="ML dependencies not available")
     try:
         W_dense, df = _load_network()
-        model = load_trained_model(GNN_MODEL_PATH, in_channels=7)
-        pred = predict_risk(model, W_dense, df)
-        risk_probs = pred["risk_probs"]
+        model = load_trained_model(str(GNN_MODEL_PATH))
+        result = predict_risk(model, W_dense, df)
 
         scores = []
         for i, row in df.iterrows():
             scores.append({
                 "id": int(i),
                 "name": str(row["bank_name"]),
-                "risk_score": float(risk_probs[i]),
+                "risk_score": float(result["risk_scores"][i]),
             })
 
         return {"scores": scores}

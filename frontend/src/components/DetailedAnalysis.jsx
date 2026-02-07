@@ -103,18 +103,34 @@ function MechanicalDetail({ results }) {
 
   const status = results.status ?? [];
   const bankNames = results.bank_names ?? [];
+    const isValidName = (name) => {
+      if (name === null || name === undefined) return false;
+      const s = String(name).trim();
+      if (s.length === 0) return false;
+      const lower = s.toLowerCase();
+      return lower !== "nan" && lower !== "0";
+    };
+
+    const isValidEntry = (entry) => {
+      if (!isValidName(entry.name)) return false;
+      const nameStr = String(entry.name).trim();
+      const isPlaceholder = /^bank\s+\d+$/i.test(nameStr);
+      const allZero = (entry.initial ?? 0) === 0 && (entry.final ?? 0) === 0;
+      return !(isPlaceholder && allZero);
+    };
   const initialEq = results.initial_equity ?? [];
   const finalEq = results.final_equity ?? [];
 
   // ── Top casualties ──
   const casualties = bankNames
     .map((name, i) => ({
-      name: name?.slice(0, 35) ?? `Bank ${i}`,
+      name: (typeof name === "string" ? name.slice(0, 35) : String(name ?? `Bank ${i}`)).slice(0, 35),
       initial: initialEq[i] ?? 0,
       final: finalEq[i] ?? 0,
       loss: (initialEq[i] ?? 0) - (finalEq[i] ?? 0),
       status: status[i] ?? "Safe",
     }))
+    .filter((c) => isValidEntry(c))
     .sort((a, b) => b.loss - a.loss)
     .slice(0, 15);
 
@@ -152,6 +168,7 @@ function MechanicalDetail({ results }) {
   ].filter((d) => d.name === "Safe" && d.value === 1 ? false : d.value > 0);
 
   const totalRelevant = statusPie.reduce((acc, curr) => acc + curr.value, 0);
+  const safeTotal = totalRelevant > 0 ? totalRelevant : 1;
 
   // ── Bank lists by status ──
   const defaultBanks = [];
@@ -160,11 +177,12 @@ function MechanicalDetail({ results }) {
   bankNames.forEach((name, i) => {
     const st = status[i] ?? "Safe";
     const entry = {
-      name: name?.slice(0, 40) ?? `Bank ${i}`,
+      name: (typeof name === "string" ? name.slice(0, 40) : String(name ?? `Bank ${i}`)).slice(0, 40),
       initial: initialEq[i] ?? 0,
       final: finalEq[i] ?? 0,
       loss: (initialEq[i] ?? 0) - (finalEq[i] ?? 0),
     };
+    if (!isValidEntry(entry)) return;
     if (st === "Default") defaultBanks.push(entry);
     else if (st === "Distressed") distressedBanks.push(entry);
     else safeBanks.push(entry);
@@ -194,7 +212,7 @@ function MechanicalDetail({ results }) {
         />
         <StatCard
           label="Trigger Bank"
-          value={results.trigger_name?.slice(0, 20) ?? "Bank 0"}
+          value={(typeof results.trigger_name === "string" ? results.trigger_name : String(results.trigger_name ?? "Bank 0")).slice(0, 20)}
           icon={Shield}
           color="text-neon-purple"
         />
@@ -211,26 +229,32 @@ function MechanicalDetail({ results }) {
         <div className="space-y-4">
           {/* Stat cards row */}
           <div className="grid grid-cols-3 gap-3">
-            {statusPie.map((s) => (
-              <div key={s.name} className="glass rounded-xl p-4 text-center">
-                <div className="text-3xl font-bold font-[family-name:var(--font-mono)]" style={{ color: s.fill }}>
-                  {s.value.toLocaleString()}
-                </div>
-                <div className="text-[10px] text-text-secondary uppercase tracking-widest mt-1 font-[family-name:var(--font-mono)]">
-                  {s.name}
-                </div>
-                <div className="text-xs text-text-muted font-[family-name:var(--font-mono)]">
-                  {((s.value / totalRelevant) * 100).toFixed(1)}%
-                </div>
+            {statusPie.length === 0 ? (
+              <div className="col-span-3 text-center text-xs text-text-muted">
+                No status data available.
               </div>
-            ))}
+            ) : (
+              statusPie.map((s) => (
+                <div key={s.name} className="glass rounded-xl p-4 text-center">
+                  <div className="text-3xl font-bold font-[family-name:var(--font-mono)]" style={{ color: s.fill }}>
+                    {s.value.toLocaleString()}
+                  </div>
+                  <div className="text-[10px] text-text-secondary uppercase tracking-widest mt-1 font-[family-name:var(--font-mono)]">
+                    {s.name}
+                  </div>
+                  <div className="text-xs text-text-muted font-[family-name:var(--font-mono)]">
+                    {((s.value / safeTotal) * 100).toFixed(1)}%
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* Stacked progress bar */}
           <div className="space-y-2">
             <div className="flex h-4 w-full rounded-full overflow-hidden bg-white/5">
               {statusPie.map((s) => {
-                const pct = (s.value / totalRelevant) * 100;
+                const pct = (s.value / safeTotal) * 100;
                 if (pct === 0) return null;
                 return (
                   <div
@@ -495,25 +519,6 @@ function MechanicalDetail({ results }) {
         </div>
       </Section>
 
-      {/* ── All Defaulted Banks ── */}
-      {(results.n_defaults ?? 0) > 0 && (
-        <Section title={`All Defaulted Banks (${results.n_defaults})`} icon={Flame} defaultOpen={false}>
-          <div className="flex flex-wrap gap-2 max-h-60 overflow-auto">
-            {bankNames
-              .map((name, i) => ({ name, status: status[i] }))
-              .filter((b) => b.status === "Default")
-              .map((b, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-crisis-red/10 border border-crisis-red/20 text-[10px] font-[family-name:var(--font-mono)] text-crisis-red"
-                >
-                  <span className="h-1.5 w-1.5 rounded-full bg-crisis-red" />
-                  {b.name?.slice(0, 30)}
-                </span>
-              ))}
-          </div>
-        </Section>
-      )}
     </>
   );
 }

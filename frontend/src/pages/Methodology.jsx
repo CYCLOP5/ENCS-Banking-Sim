@@ -183,12 +183,10 @@ export default function Methodology() {
             />
 
             <p className="text-text-secondary leading-relaxed mb-4">
-              A <b className="text-white">3-layer GCN</b> (Graph Convolutional Network)
-              learns to predict bank default risk from the interbank topology.
-              The architecture narrows sequentially{" "}
-              (<Tex>{"64 \\to 32 \\to 16"}</Tex> channels) to force
-              high-level feature abstraction at each hop. Each
-              node has a <b className="text-white">7-dimensional feature vector</b>:
+              An <b className="text-white">edge-aware PNA</b> (Principal Neighbourhood Aggregation)
+              model learns to predict bank risk frequency from the interbank topology.
+              It uses multi-aggregators and degree scalers for hub-heavy networks. Each
+              node has a <b className="text-white">13-dimensional feature vector</b> (7 base + 6 topology):
             </p>
 
             <div className="glass rounded-lg p-4 mb-4 font-[family-name:var(--font-mono)] text-sm">
@@ -218,20 +216,18 @@ export default function Methodology() {
             </div>
 
             <p className="text-text-secondary leading-relaxed mb-4">
-              The message-passing rule at layer <Tex>{"l"}</Tex>:
+              The message-passing uses multiple aggregators and degree scalers:
             </p>
 
             <TexBlock>
-              {
-                "\\mathbf{h}_i^{(l+1)} = \\sigma\\!\\left(\\sum_{j \\in \\mathcal{N}(i)} \\frac{1}{\\sqrt{d_i d_j}} \\, \\mathbf{W}^{(l)} \\mathbf{h}_j^{(l)}\\right)"
-              }
+              {"\\mathbf{h}_i^{(l+1)} = \\sigma\\!\\Big( \\Vert_{a \\in \\mathcal{A}} \\text{AGG}_a(\\mathcal{N}(i)) \\Big)"}
             </TexBlock>
 
             <p className="text-text-secondary leading-relaxed text-sm">
-              Trained on <b className="text-white">500 Monte Carlo simulation runs</b> across
-              three regimes (Calm / Moderate / Stressed). Binary cross-entropy loss
-              optimises for distinguishing Safe vs. Risky (Default + Distressed)
-              nodes.
+              Trained on Monte Carlo simulations across three regimes, then
+              <b className="text-white"> aggregated into a single risk-frequency graph</b>.
+              The objective is <b className="text-white">weighted MSE regression</b> to predict
+              each bank’s risk frequency in [0,1].
             </p>
 
             <div className="mt-6 glass rounded-lg p-4 border border-data-blue/10">
@@ -241,15 +237,15 @@ export default function Methodology() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-text-secondary">
                 <div className="glass rounded p-2 text-center">
                   <span className="text-data-blue font-[family-name:var(--font-mono)]">Loss</span>
-                  <p className="text-[11px] mt-1">Class-weighted cross-entropy (auto-balanced, capped at 5.0×)</p>
+                  <p className="text-[11px] mt-1">Weighted MSE (5× high-risk, 2× mid-risk)</p>
                 </div>
                 <div className="glass rounded p-2 text-center">
                   <span className="text-data-blue font-[family-name:var(--font-mono)]">Scheduler</span>
-                  <p className="text-[11px] mt-1">Cosine Annealing LR over 80 epochs</p>
+                  <p className="text-[11px] mt-1">AdamW + CosineAnnealingWarmRestarts</p>
                 </div>
                 <div className="glass rounded p-2 text-center">
                   <span className="text-data-blue font-[family-name:var(--font-mono)]">Regularisation</span>
-                  <p className="text-[11px] mt-1">Dropout <Tex>{"p = 0.3"}</Tex> between GCN layers</p>
+                  <p className="text-[11px] mt-1">Dropout <Tex>{"p = 0.2"}</Tex> with residual PNA blocks</p>
                 </div>
               </div>
             </div>

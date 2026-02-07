@@ -1055,7 +1055,7 @@ export default function Simulation() {
                 <div className="glass rounded-lg p-3 text-[11px] text-text-muted">
                   <span className="text-neon-purple font-bold">Insight:</span>{" "}
                   Compares OPAQUE vs TRANSPARENT regimes side-by-side.
-                  Transparent regime uses GNN risk scores as public signal to
+                  Transparent regime uses GNN risk-frequency scores as public signal to
                   prevent coordination failures.
                 </div>
               </motion.div>

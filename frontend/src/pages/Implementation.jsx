@@ -536,24 +536,31 @@ if RUST_AVAILABLE:
                     <Activity className="w-5 h-5 text-data-blue" />
                     Monte Carlo Training Regimes
                  </h3>
-                 <p className="text-text-secondary mb-4">
+                  <p className="text-text-secondary mb-4">
                     The GNN dataset is generated from <strong>500 MC runs</strong> across a
-                    skewed 3-regime distribution, ensuring the model sees enough stress
-                    events to learn contagion dynamics:
-                 </p>
+                    balanced 3-regime distribution, ensuring the model sees enough stress
+                    events to learn contagion dynamics. Labels are aggregated into a
+                    <strong> risk-frequency regression target</strong> (share of default or
+                    distressed banks) rather than a binary class.
+                  </p>
+                  <p className="text-sm text-text-secondary mb-4">
+                    The PNAConv model consumes <strong>13 node features</strong> (7 balance
+                    sheet + 6 topology enrichments), applies z-score normalization, and
+                    uses <strong>NeighborLoader</strong> minibatching for scalable training.
+                  </p>
                  <div className="grid grid-cols-3 gap-3 mb-4">
                     <div className="p-3 bg-white/5 rounded-lg border border-white/10 text-center">
-                       <div className="text-stability-green font-mono text-lg">20%</div>
+                       <div className="text-stability-green font-mono text-lg">33%</div>
                        <div className="text-xs text-text-muted mt-1">Calm</div>
                        <div className="text-[10px] text-text-muted">Small triggers, tiny severity</div>
                     </div>
                     <div className="p-3 bg-white/5 rounded-lg border border-white/10 text-center">
-                       <div className="text-amber-warn font-mono text-lg">35%</div>
+                       <div className="text-amber-warn font-mono text-lg">33%</div>
                        <div className="text-xs text-text-muted mt-1">Moderate</div>
                        <div className="text-[10px] text-text-muted">Mid triggers + margins</div>
                     </div>
                     <div className="p-3 bg-white/5 rounded-lg border border-white/10 text-center">
-                       <div className="text-crisis-red font-mono text-lg">45%</div>
+                       <div className="text-crisis-red font-mono text-lg">34%</div>
                        <div className="text-xs text-text-muted mt-1">Stressed</div>
                        <div className="text-[10px] text-text-muted">Top-30 triggers, full cascade</div>
                     </div>

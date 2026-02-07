@@ -1,0 +1,12 @@
+mlflow==3.9.0
+cloudpickle==3.1.2
+gmpy2==2.2.2
+jaraco-text==4.0.0
+numpy==2.4.1
+pandas==2.3.3
+scipy==1.16.3
+torch-geometric==2.7.0
+torch-scatter==2.1.2
+torch-sparse==0.6.18
+torch==2.5.1
+triton==3.1.0

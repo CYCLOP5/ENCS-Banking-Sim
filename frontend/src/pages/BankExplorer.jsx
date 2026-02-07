@@ -45,7 +45,11 @@ export default function BankExplorer() {
 
   // Filter + sort
   const filtered = useMemo(() => {
-    let data = banks;
+    let data = banks.filter((b) => {
+      const name = b?.name ?? "";
+      const s = String(name).trim();
+      return s.length > 0 && s.toLowerCase() !== "nan";
+    });
     if (search) {
       const q = search.toLowerCase();
       data = data.filter(
@@ -83,7 +87,7 @@ export default function BankExplorer() {
     { key: "total_assets", label: "Total Assets", width: "w-32" },
     { key: "equity", label: "Equity", width: "w-28" },
     { key: "leverage_ratio", label: "Leverage", width: "w-24" },
-    { key: "gnn_risk_score", label: "GNN Risk", width: "w-28" },
+    { key: "gnn_risk_score", label: "Risk Frequency", width: "w-28" },
     { key: "carbon_score", label: "Carbon", width: "w-24" },
   ];
 
