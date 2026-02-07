@@ -496,6 +496,104 @@ def generate_dataset(
 
 
 # ===========================================================================
+#  Dataset Aggregation — collapse MC runs into a single graph
+# ===========================================================================
+
+def aggregate_dataset(dataset: list) -> Data:
+    """
+    Collapse N Monte-Carlo graph snapshots into a *single* graph
+    where y[i] = fraction of MC runs in which node i was Risky.
+
+    Also enriches node features with topology-derived features and
+    z-score standardises everything so the GNN sees unit-variance inputs.
+    """
+    print("\n" + "=" * 60)
+    print(f"AGGREGATING {len(dataset)} MC GRAPHS → SINGLE RISK-FREQUENCY GRAPH")
+    print("=" * 60)
+
+    n_nodes = dataset[0].num_nodes
+    n_runs = len(dataset)
+
+    # Stack labels: (n_runs, n_nodes) → mean → (n_nodes,) risk frequency
+    labels = torch.stack([d.y for d in dataset]).float()       # (R, N)
+    risk_freq = labels.mean(dim=0)                              # (N,)
+
+    # Use mean features across runs (they barely vary anyway)
+    feats = torch.stack([d.x for d in dataset]).mean(dim=0)    # (N, F)
+
+    # Use mean edge_attr across runs
+    edge_attrs = torch.stack([d.edge_attr.float() for d in dataset]).mean(dim=0)
+
+    # Topology is identical; take from first graph
+    edge_index = dataset[0].edge_index
+
+    # ── Enrich with topology-derived features ─────────────────────────
+    from torch_geometric.utils import degree as _deg
+    ei_np = edge_index.numpy()
+    in_deg = _deg(edge_index[1], num_nodes=n_nodes, dtype=torch.float).unsqueeze(1)   # (N,1)
+    out_deg = _deg(edge_index[0], num_nodes=n_nodes, dtype=torch.float).unsqueeze(1)  # (N,1)
+
+    # Net strength = out_strength - in_strength (from raw features cols 2,3)
+    out_str = feats[:, 2:3]   # log_out_strength
+    in_str = feats[:, 3:4]    # log_in_strength
+    net_str = out_str - in_str                                   # (N,1)
+
+    # Strength ratio = out / (out + in + eps)
+    str_ratio = out_str / (out_str + in_str + 1e-6)             # (N,1)
+
+    # Asset-to-equity ratio (from cols 0 and 5)
+    log_ta = feats[:, 0:1]
+    log_eq = feats[:, 5:6]
+    asset_equity = log_ta - log_eq                               # (N,1) log(TA/E)
+
+    # Degree ratio
+    deg_ratio = out_deg / (out_deg + in_deg + 1e-6)             # (N,1)
+
+    # Concatenate: original 7 + 6 new = 13 features
+    feats_enriched = torch.cat([
+        feats,          # 7 original
+        torch.log1p(in_deg),       # 8: log in-degree
+        torch.log1p(out_deg),      # 9: log out-degree
+        net_str,        # 10: net strength
+        str_ratio,      # 11: strength ratio
+        asset_equity,   # 12: asset-to-equity (log-scale)
+        deg_ratio,      # 13: degree ratio
+    ], dim=1)
+
+    # ── Z-score standardisation ───────────────────────────────────────
+    feat_mean = feats_enriched.mean(dim=0, keepdim=True)
+    feat_std = feats_enriched.std(dim=0, keepdim=True).clamp(min=1e-6)
+    feats_norm = (feats_enriched - feat_mean) / feat_std
+
+    # Also standardise edge features
+    ea_mean = edge_attrs.mean(dim=0, keepdim=True)
+    ea_std = edge_attrs.std(dim=0, keepdim=True).clamp(min=1e-6)
+    edge_attrs_norm = (edge_attrs - ea_mean) / ea_std
+
+    agg = Data(
+        x=feats_norm,
+        edge_index=edge_index,
+        edge_attr=edge_attrs_norm,
+        y=risk_freq,                    # continuous in [0, 1]
+    )
+    # Store normalization stats for inference
+    agg.feat_mean = feat_mean.squeeze(0)
+    agg.feat_std = feat_std.squeeze(0)
+    agg.ea_mean = ea_mean.squeeze(0)
+    agg.ea_std = ea_std.squeeze(0)
+
+    n_feat = feats_norm.shape[1]
+    print(f"  Nodes: {n_nodes}  |  Edges: {edge_index.shape[1]}  |  Features: {n_feat}")
+    print(f"  Risk frequency — min: {risk_freq.min():.4f}  "
+          f"max: {risk_freq.max():.4f}  mean: {risk_freq.mean():.4f}  "
+          f"std: {risk_freq.std():.4f}")
+    print(f"  Nodes with risk_freq > 0.50: {(risk_freq > 0.50).sum().item()}")
+    print(f"  Nodes with risk_freq > 0.25: {(risk_freq > 0.25).sum().item()}")
+    print(f"  Nodes with risk_freq < 0.05: {(risk_freq < 0.05).sum().item()}")
+    return agg
+
+
+# ===========================================================================
 #  Model Definition — Edge-Aware PNA
 # ===========================================================================
 
@@ -696,7 +794,367 @@ def _find_best_threshold(labels: np.ndarray, probs: np.ndarray) -> tuple[float, 
 
 
 # ===========================================================================
-#  Training
+#  Regression Training  (aggregated single-graph mode)
+# ===========================================================================
+
+def train_model_regression(
+    agg_data: Data,
+    epochs: int = 300,
+    lr: float = 3e-3,
+    weight_decay: float = 1e-4,
+    device: str = "auto",
+    patience: int = 40,
+    warmup_epochs: int = 15,
+    max_grad_norm: float = 1.0,
+    hidden: int = 128,
+    num_layers: int = 3,
+    towers: int = 4,
+    val_frac: float = 0.2,
+    dropout: float = 0.2,
+) -> SystRiskPNA:
+    """
+    Train PNA GNN as a *regression* model on the aggregated single graph
+    using NeighborLoader mini-batching to fit large models in GPU memory.
+
+    Key design:
+      - NeighborLoader: samples k-hop subgraphs per mini-batch (avoids OOM)
+      - Weighted MSE: 5× on high-risk, 2× on mid-risk nodes
+      - Early stopping by Pearson r
+      - Automatic threshold sweep at evaluation
+    """
+    from torch_geometric.loader import NeighborLoader
+
+    print("\n" + "=" * 60)
+    print("GNN REGRESSION TRAINING  (Aggregated Risk Frequency v2)")
+    print("=" * 60)
+
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"  Device: {device}")
+
+    N = agg_data.num_nodes
+    y = agg_data.y.float()   # (N,) continuous risk frequency
+
+    print(f"  Nodes: {N}  |  Edges: {agg_data.edge_index.shape[1]}")
+    print(f"  Target stats — mean: {y.mean():.4f}  std: {y.std():.4f}")
+
+    # ── Node-level train/val split ────────────────────────────────────
+    rng = np.random.RandomState(42)
+    perm = rng.permutation(N)
+    n_val = max(1, int(N * val_frac))
+    val_mask = torch.zeros(N, dtype=torch.bool)
+    val_mask[perm[:n_val]] = True
+    train_mask = ~val_mask
+
+    # Store masks on the Data object for NeighborLoader
+    agg_data.train_mask = train_mask
+    agg_data.val_mask = val_mask
+
+    print(f"  Train nodes: {train_mask.sum().item()}  |  Val nodes: {val_mask.sum().item()}")
+    print(f"  Train target mean: {y[train_mask].mean():.4f}  |  Val target mean: {y[val_mask].mean():.4f}")
+
+    # ── Degree histogram (single graph) ───────────────────────────────
+    from torch_geometric.utils import degree as _degree
+    d = _degree(agg_data.edge_index[1], num_nodes=N, dtype=torch.long)
+    max_deg = int(d.max())
+    deg = torch.zeros(max_deg + 1, dtype=torch.long)
+    for v in d:
+        deg[int(v)] += 1
+    print(f"  Degree histogram: max_deg={max_deg}")
+
+    # ── Model — single output for regression ──────────────────────────
+    in_channels = agg_data.x.shape[1]
+    edge_dim = agg_data.edge_attr.shape[1] if agg_data.edge_attr is not None else EDGE_FEAT_DIM
+
+    model = SystRiskPNA(
+        in_channels=in_channels,
+        hidden=hidden,
+        out_channels=1,
+        edge_dim=edge_dim,
+        deg=deg,
+        num_layers=num_layers,
+        towers=towers,
+        dropout=dropout,
+    ).to(device)
+
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  Model: SystRiskPNA (regression v2)  |  Parameters: {n_params:,}")
+
+    # ── Per-node loss weights ─────────────────────────────────────────
+    node_weights = torch.ones(N)
+    high_risk_mask = y >= 0.25
+    node_weights[high_risk_mask] = 5.0
+    mid_risk_mask = (y >= 0.15) & (y < 0.25)
+    node_weights[mid_risk_mask] = 2.0
+    agg_data.node_weight = node_weights   # attach to Data for NeighborLoader
+    print(f"  Loss weights: 5× for {high_risk_mask.sum().item()} high-risk nodes, "
+          f"2× for {mid_risk_mask.sum().item()} mid-risk, 1× for rest")
+
+    # ── NeighborLoader for mini-batch training ────────────────────────
+    # Sample neighbors per layer: fewer in deeper layers to control memory
+    num_neighbors = [20, 15, 10][:num_layers]
+    train_idx = train_mask.nonzero(as_tuple=False).view(-1)
+    val_idx = val_mask.nonzero(as_tuple=False).view(-1)
+
+    train_loader = NeighborLoader(
+        agg_data,
+        num_neighbors=num_neighbors,
+        batch_size=512,
+        input_nodes=train_idx,
+        shuffle=True,
+    )
+    val_loader = NeighborLoader(
+        agg_data,
+        num_neighbors=num_neighbors,
+        batch_size=1024,
+        input_nodes=val_idx,
+        shuffle=False,
+    )
+    print(f"  NeighborLoader: neighbors={num_neighbors}, train_batch=512, val_batch=1024")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2)
+
+    # ── MLflow ────────────────────────────────────────────────────────
+    if MLFLOW_AVAILABLE:
+        mlflow.set_experiment("ENCS-GNN-Risk")
+        mlflow.start_run(run_name=f"pna_reg_v2_e{epochs}_h{hidden}_l{num_layers}")
+        mlflow.log_params({
+            "mode": "regression_aggregated_v2_minibatch",
+            "epochs": epochs, "lr": lr, "hidden": hidden,
+            "num_layers": num_layers, "towers": towers,
+            "dropout": dropout, "n_nodes": N, "in_channels": in_channels,
+            "n_train": int(train_mask.sum()), "n_val": int(val_mask.sum()),
+            "n_params": n_params, "device": device,
+            "num_neighbors": str(num_neighbors),
+        })
+
+    # ── Training loop ─────────────────────────────────────────────────
+    best_val_r = -1.0
+    best_state = None
+    patience_counter = 0
+    history: dict = {
+        "epoch": [], "train_mse": [], "val_mse": [], "val_mae": [],
+        "val_pearson_r": [], "val_f1_at_025": [], "val_auc": [], "lr": [],
+    }
+
+    for epoch in range(1, epochs + 1):
+        # Warmup
+        if epoch <= warmup_epochs:
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr * (epoch / warmup_epochs)
+
+        # ── Train (mini-batch) ────────────────────────────────────────
+        model.train()
+        total_loss = 0.0
+        total_nodes = 0
+
+        for batch in train_loader:
+            batch = batch.to(device)
+            optimizer.zero_grad(set_to_none=True)
+
+            ea = batch.edge_attr.float() if batch.edge_attr is not None else None
+            logits = model(batch.x.float(), batch.edge_index, ea).squeeze(-1)
+            preds = torch.sigmoid(logits)
+
+            # Only compute loss on seed nodes (batch_size first nodes)
+            n_seed = batch.batch_size if hasattr(batch, 'batch_size') else batch.num_nodes
+            preds_seed = preds[:n_seed]
+            y_seed = batch.y[:n_seed].float()
+            w_seed = batch.node_weight[:n_seed].to(device)
+
+            residuals = (preds_seed - y_seed) ** 2
+            loss = (residuals * w_seed).mean()
+
+            if torch.isnan(loss) or torch.isinf(loss):
+                continue
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            optimizer.step()
+
+            total_loss += loss.item() * n_seed
+            total_nodes += n_seed
+
+        if total_nodes == 0:
+            print(f"  ⚠  Epoch {epoch}: all batches NaN — skipping.")
+            continue
+
+        train_mse = total_loss / total_nodes
+
+        # ── Validation (mini-batch) ───────────────────────────────────
+        model.eval()
+        val_preds_list = []
+        val_true_list = []
+
+        with torch.no_grad():
+            for batch in val_loader:
+                batch = batch.to(device)
+                ea = batch.edge_attr.float() if batch.edge_attr is not None else None
+                logits = model(batch.x.float(), batch.edge_index, ea).squeeze(-1)
+                preds = torch.sigmoid(logits)
+
+                n_seed = batch.batch_size if hasattr(batch, 'batch_size') else batch.num_nodes
+                val_preds_list.append(preds[:n_seed].cpu().numpy())
+                val_true_list.append(batch.y[:n_seed].cpu().numpy())
+
+        val_pred = np.concatenate(val_preds_list)
+        val_true = np.concatenate(val_true_list)
+
+        val_mse = float(np.mean((val_pred - val_true) ** 2))
+        val_mae = float(np.mean(np.abs(val_pred - val_true)))
+        val_r = float(np.corrcoef(val_pred, val_true)[0, 1]) if val_pred.std() > 1e-8 else 0.0
+
+        # Binary metrics at threshold 0.25
+        bin_true = (val_true >= 0.25).astype(np.int64)
+        bin_pred = (val_pred >= 0.25).astype(np.int64)
+        _, _, val_f1, _ = precision_recall_fscore_support(
+            bin_true, bin_pred, average="binary", zero_division=0
+        )
+        try:
+            val_auc = roc_auc_score(bin_true, val_pred)
+        except ValueError:
+            val_auc = 0.0
+
+        current_lr = optimizer.param_groups[0]["lr"]
+        history["epoch"].append(epoch)
+        history["train_mse"].append(round(train_mse, 6))
+        history["val_mse"].append(round(val_mse, 6))
+        history["val_mae"].append(round(val_mae, 6))
+        history["val_pearson_r"].append(round(val_r, 4))
+        history["val_f1_at_025"].append(round(float(val_f1), 4))
+        history["val_auc"].append(round(float(val_auc), 4))
+        history["lr"].append(round(current_lr, 8))
+
+        if MLFLOW_AVAILABLE:
+            mlflow.log_metrics({
+                "train_mse": train_mse, "val_mse": val_mse,
+                "val_mae": val_mae, "val_r": val_r,
+                "val_f1_025": float(val_f1), "val_auc": float(val_auc),
+                "lr": current_lr,
+            }, step=epoch)
+
+        # ── Early stopping by Pearson r ───────────────────────────────
+        if val_r > best_val_r + 1e-4:
+            best_val_r = val_r
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"  Early stopping at epoch {epoch} (no r improvement for {patience} epochs)")
+                break
+
+        if epoch > warmup_epochs:
+            scheduler.step()
+
+        if epoch % 20 == 0 or epoch == 1:
+            print(
+                f"  Epoch {epoch:3d}/{epochs} | Loss: {train_mse:.6f} | "
+                f"Val MSE: {val_mse:.6f} | MAE: {val_mae:.4f} | "
+                f"r: {val_r:.3f} | F1@.25: {val_f1:.3f} | AUC: {val_auc:.3f} | "
+                f"LR: {current_lr:.2e}"
+            )
+
+    # ── Restore best ──────────────────────────────────────────────────
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model = model.to(device)
+    print(f"\n  Best Val Pearson r: {best_val_r:.4f}")
+
+    # ── Final evaluation (mini-batch) ─────────────────────────────────
+    model.eval()
+    val_preds_list = []
+    val_true_list = []
+    with torch.no_grad():
+        for batch in val_loader:
+            batch = batch.to(device)
+            ea = batch.edge_attr.float() if batch.edge_attr is not None else None
+            logits = model(batch.x.float(), batch.edge_index, ea).squeeze(-1)
+            preds = torch.sigmoid(logits)
+            n_seed = batch.batch_size if hasattr(batch, 'batch_size') else batch.num_nodes
+            val_preds_list.append(preds[:n_seed].cpu().numpy())
+            val_true_list.append(batch.y[:n_seed].cpu().numpy())
+
+    val_pred_f = np.concatenate(val_preds_list)
+    val_true_f = np.concatenate(val_true_list)
+
+    final_mse = float(np.mean((val_pred_f - val_true_f) ** 2))
+    final_mae = float(np.mean(np.abs(val_pred_f - val_true_f)))
+    final_r = float(np.corrcoef(val_pred_f, val_true_f)[0, 1]) if val_pred_f.std() > 1e-8 else 0.0
+
+    # ── Threshold sweep: find optimal binary threshold ────────────────
+    print("\n  Threshold sweep:")
+    best_th = 0.25
+    best_f1_sweep = 0.0
+    for th in np.arange(0.10, 0.40, 0.01):
+        bt = (val_true_f >= th).astype(np.int64)
+        bp = (val_pred_f >= th).astype(np.int64)
+        _, _, f1_s, _ = precision_recall_fscore_support(bt, bp, average="binary", zero_division=0)
+        if f1_s > best_f1_sweep:
+            best_f1_sweep = f1_s
+            best_th = th
+    print(f"  Best threshold: {best_th:.2f} (F1={best_f1_sweep:.3f})")
+
+    bin_true_f = (val_true_f >= best_th).astype(np.int64)
+    bin_pred_f = (val_pred_f >= best_th).astype(np.int64)
+    final_prec, final_rec, final_f1, _ = precision_recall_fscore_support(
+        bin_true_f, bin_pred_f, average="binary", zero_division=0
+    )
+    try:
+        final_auc = roc_auc_score(bin_true_f, val_pred_f)
+    except ValueError:
+        final_auc = 0.0
+
+    cm = confusion_matrix(bin_true_f, bin_pred_f)
+
+    print(f"\n  Classification Report (Val, threshold={best_th:.2f}):")
+    print(classification_report(
+        bin_true_f, bin_pred_f, target_names=["Low Risk", "High Risk"], zero_division=0
+    ))
+    print(f"  Confusion Matrix:\n{cm}")
+    print(f"\n  Final — MSE: {final_mse:.6f} | MAE: {final_mae:.4f} | "
+          f"r: {final_r:.3f} | Prec: {final_prec:.3f} | Rec: {final_rec:.3f} | "
+          f"F1: {final_f1:.3f} | AUC: {final_auc:.3f}")
+
+    # ── Save artifacts ────────────────────────────────────────────────
+    history_path = str(BASE_DIR / "training_history.json")
+    with open(history_path, "w") as f:
+        json.dump(history, f, indent=2)
+    print(f"  Training history saved: {history_path}")
+
+    deg_path = str(BASE_DIR / "deg_histogram.pt")
+    torch.save(deg, deg_path)
+
+    # Save normalization stats for inference
+    norm_path = str(BASE_DIR / "norm_stats.pt")
+    torch.save({
+        "feat_mean": agg_data.feat_mean,
+        "feat_std": agg_data.feat_std,
+        "ea_mean": agg_data.ea_mean,
+        "ea_std": agg_data.ea_std,
+        "in_channels": in_channels,
+    }, norm_path)
+    print(f"  Normalization stats saved: {norm_path}")
+
+    if MLFLOW_AVAILABLE:
+        mlflow.log_metrics({
+            "best_val_r": best_val_r,
+            "final_mse": final_mse, "final_mae": final_mae,
+            "final_r": final_r, "final_f1": final_f1,
+            "final_auc": final_auc, "best_threshold": best_th,
+        })
+        mlflow.log_artifact(history_path)
+        mlflow.log_artifact(deg_path)
+        mlflow.pytorch.log_model(model, "gnn_model")
+        mlflow.end_run()
+        print("  ✓ MLflow run logged successfully")
+
+    return model
+
+
+# ===========================================================================
+#  Training  (legacy multi-graph classification — kept for reference)
 # ===========================================================================
 
 def train_model(
@@ -1357,17 +1815,21 @@ def explain_predictions(
 
 def load_trained_model(
     model_path: str = None,
-    in_channels: int = NODE_FEAT_DIM,
+    in_channels: int = 13,           # 7 original + 6 enriched features
     device: str = "cpu",
-    hidden: int = 32,
+    hidden: int = 128,
     edge_dim: int = EDGE_FEAT_DIM,
-    num_layers: int = 2,
-    towers: int = 2,
+    num_layers: int = 3,
+    towers: int = 4,
+    out_channels: int = 1,
 ) -> SystRiskPNA:
     """Load a trained PNA model from disk.
 
     Also loads the saved degree histogram (deg_histogram.pt) so PNA scalers
     are reconstructed correctly.
+
+    Default out_channels=1 matches the new regression mode.
+    For legacy classification models, pass out_channels=2.
     """
     if model_path is None:
         model_path = str(MODEL_PATH)
@@ -1381,6 +1843,7 @@ def load_trained_model(
     model = SystRiskPNA(
         in_channels=in_channels,
         hidden=hidden,
+        out_channels=out_channels,
         edge_dim=edge_dim,
         deg=deg,
         num_layers=num_layers,
@@ -1422,17 +1885,51 @@ def predict_risk(
     edge_index = build_edge_index(W, topk_per_row=PRUNE_TOPK_DEFAULT)
     edge_attr = build_edge_attr(W, edge_index=edge_index)
 
-    x = torch.tensor(node_feats, dtype=torch.float32).to(device)
-    ei = torch.tensor(edge_index, dtype=torch.long).to(device)
-    ea = torch.tensor(edge_attr, dtype=torch.float32).to(device)
+    x = torch.tensor(node_feats, dtype=torch.float32)
+    ei = torch.tensor(edge_index, dtype=torch.long)
+    ea = torch.tensor(edge_attr, dtype=torch.float32)
+
+    # ── Enrich features (must match aggregate_dataset) ────────────────
+    from torch_geometric.utils import degree as _deg
+    n_nodes = x.shape[0]
+    in_deg = _deg(ei[1], num_nodes=n_nodes, dtype=torch.float).unsqueeze(1)
+    out_deg = _deg(ei[0], num_nodes=n_nodes, dtype=torch.float).unsqueeze(1)
+    out_str = x[:, 2:3]
+    in_str = x[:, 3:4]
+    net_str = out_str - in_str
+    str_ratio = out_str / (out_str + in_str + 1e-6)
+    log_ta = x[:, 0:1]
+    log_eq = x[:, 5:6]
+    asset_equity = log_ta - log_eq
+    deg_ratio = out_deg / (out_deg + in_deg + 1e-6)
+
+    x = torch.cat([
+        x,
+        torch.log1p(in_deg), torch.log1p(out_deg),
+        net_str, str_ratio, asset_equity, deg_ratio,
+    ], dim=1)
+
+    # ── Apply z-score normalization if stats are available ─────────────
+    norm_path = BASE_DIR / "norm_stats.pt"
+    if norm_path.exists():
+        stats = torch.load(str(norm_path), map_location="cpu", weights_only=True)
+        x = (x - stats["feat_mean"].unsqueeze(0)) / stats["feat_std"].unsqueeze(0).clamp(min=1e-6)
+        ea = (ea - stats["ea_mean"].unsqueeze(0)) / stats["ea_std"].unsqueeze(0).clamp(min=1e-6)
+
+    x = x.to(device)
+    ei = ei.to(device)
+    ea = ea.to(device)
 
     model = model.to(device)
     model.eval()
     with torch.no_grad():
         logits = model(x, ei, ea)
-        probs = F.softmax(logits, dim=1).cpu().numpy()
-
-    risk_probs = probs[:, 1]
+        # Regression model (out_channels=1) vs classification (out_channels=2)
+        if logits.shape[-1] == 1:
+            risk_probs = torch.sigmoid(logits.squeeze(-1)).cpu().numpy()
+        else:
+            probs = F.softmax(logits, dim=1).cpu().numpy()
+            risk_probs = probs[:, 1]
     risk_labels = np.where(risk_probs >= 0.5, "High Risk", "Low Risk")
 
     return {
@@ -1453,7 +1950,7 @@ def main():
     parser.add_argument(
         "--runs", type=int, default=500, help="Number of MC runs for data gen"
     )
-    parser.add_argument("--epochs", type=int, default=80, help="Training epochs")
+    parser.add_argument("--epochs", type=int, default=300, help="Training epochs")
     parser.add_argument(
         "--generate-only", action="store_true", help="Only generate data"
     )
@@ -1469,22 +1966,22 @@ def main():
     parser.add_argument(
         "--patience",
         type=int,
-        default=15,
+        default=40,
         help="Early stopping patience (epochs)",
     )
     parser.add_argument(
-        "--hidden", type=int, default=32, help="Hidden dimension for PNA layers"
+        "--hidden", type=int, default=128, help="Hidden dimension for PNA layers"
     )
     parser.add_argument(
         "--num-layers",
         type=int,
-        default=2,
+        default=3,
         help="Number of PNA layers (1-3). Lower = faster",
     )
     parser.add_argument(
         "--towers",
         type=int,
-        default=2,
+        default=4,
         help="Number of PNA towers per layer. Lower = faster",
     )
     parser.add_argument(
@@ -1557,7 +2054,27 @@ def main():
         default=PRUNE_TOPK_DEFAULT,
         help="Keep only top-K outgoing edges per node during training/inference (reduces GPU OOM)",
     )
+    parser.add_argument(
+        "--aggregate",
+        action="store_true",
+        default=True,
+        help="Aggregate MC graphs into single risk-frequency graph and train regression (recommended, default)",
+    )
+    parser.add_argument(
+        "--no-aggregate",
+        action="store_true",
+        help="Disable aggregation — use legacy per-graph classification (not recommended)",
+    )
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=0.3,
+        help="Dropout rate for the model",
+    )
     args = parser.parse_args()
+
+    if args.no_aggregate:
+        args.aggregate = False
 
     global MLFLOW_AVAILABLE
     if args.no_mlflow:
@@ -1587,23 +2104,39 @@ def main():
         dataset = torch.load(str(DATASET_PATH), weights_only=False)
         print(f"  Loaded dataset: {len(dataset)} graphs from {DATASET_PATH}")
 
-    model = train_model(
-        dataset,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        patience=args.patience,
-        hidden=args.hidden,
-        num_layers=args.num_layers,
-        towers=args.towers,
-        train_frac=args.train_frac,
-        val_frac=args.val_frac,
-        max_train_graphs=args.max_train_graphs,
-        max_val_graphs=args.max_val_graphs,
-        balance_mode=args.balance_mode,
-        min_risky_per_graph=args.min_risky_per_graph,
-        tune_threshold=not args.no_threshold_tuning,
-    )
+    if args.aggregate:
+        # ── Aggregate MC runs → single risk-frequency graph ────────
+        agg_data = aggregate_dataset(dataset)
+        model = train_model_regression(
+            agg_data,
+            epochs=args.epochs,
+            lr=args.lr,
+            patience=args.patience,
+            hidden=args.hidden,
+            num_layers=args.num_layers,
+            towers=args.towers,
+            device="auto",
+            dropout=args.dropout,
+        )
+    else:
+        # ── Legacy per-graph classification ────────────────────────
+        model = train_model(
+            dataset,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            patience=args.patience,
+            hidden=args.hidden,
+            num_layers=args.num_layers,
+            towers=args.towers,
+            train_frac=args.train_frac,
+            val_frac=args.val_frac,
+            max_train_graphs=args.max_train_graphs,
+            max_val_graphs=args.max_val_graphs,
+            balance_mode=args.balance_mode,
+            min_risky_per_graph=args.min_risky_per_graph,
+            tune_threshold=not args.no_threshold_tuning,
+        )
 
     torch.save(model.state_dict(), str(MODEL_PATH))
     print(f"\n  Model saved: {MODEL_PATH}")
