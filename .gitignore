@@ -6,15 +6,15 @@ __pycache__/
 # C extensions
 *.so
 # Ignore everything in data
-data/*
+backend/data/*
 
 # But keep output folder
-!data/output/
-!data/output/**
+!backend/data/output/
+!backend/data/output/**
 
 # Ignore zips completely
-zips/
-data/output/gnn_dataset.pt
+backend/zips/
+backend/data/output/gnn_dataset.pt
 # Distribution / packaging
 .Python
 build/
