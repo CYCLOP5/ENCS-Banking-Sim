@@ -1,30 +1,36 @@
-import { useRef, useCallback, useMemo, useEffect, useState } from "react";
+import { useRef, useCallback, useMemo, useEffect, useState, useImperativeHandle, forwardRef } from "react";
 import ForceGraph3D from "react-force-graph-3d";
 import * as THREE from "three";
 
 const STATUS_COLORS = {
   Default: "#ff2a6d",
-  Distressed: "#ffaa00",
-  Safe: "#05d5fa",
+  Distressed: "#ff8c00",
+  Safe: "#00e5ff",
   CCP: "#ffd700",
+};
+
+const REGION_COLORS = {
+  US: "#00e5ff",
+  EU: "#7c4dff",
+  Global: "#ffd700",
 };
 
 /**
  * 3D Force-Directed network graph for the banking topology.
- *
- * Props:
- *   - graphData: { nodes: [...], links: [...] }
- *   - statusMap: Record<nodeId, 'Default' | 'Distressed' | 'Safe'>
- *   - height / width
- *   - onNodeClick
  */
-export default function NetworkGraph3D({
+const NODE_HARD_CAP = 350;
+
+const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   graphData,
   statusMap = {},
+  contagionSet,
+  contagionActive = false,
+  contagionLinks,
   width,
   height,
   onNodeClick,
-}) {
+  maxNodes = Infinity,
+}, ref) {
   const fgRef = useRef();
   const [mounted, setMounted] = useState(false);
 
@@ -32,48 +38,162 @@ export default function NetworkGraph3D({
     setMounted(true);
   }, []);
 
-  // Enrich nodes with colour/size
+  // Geometry cache — shared across all nodes to save GPU memory
+  const geometries = useMemo(() => ({
+    large: new THREE.SphereGeometry(1, 12, 12),
+    medium: new THREE.SphereGeometry(1, 8, 8),
+    small: new THREE.SphereGeometry(1, 6, 6),
+  }), []);
+
+  // Enrich nodes with colour/size — and trim to maxNodes if needed
   const enriched = useMemo(() => {
     if (!graphData) return { nodes: [], links: [] };
-    const nodes = graphData.nodes.map((n) => ({
-      ...n,
-      color:
-        n.region === "Global"
-          ? STATUS_COLORS.CCP
-          : STATUS_COLORS[statusMap[n.id]] || STATUS_COLORS.Safe,
-      val: Math.max(Math.log10(n.total_assets || 1e9) - 8, 1),
-    }));
-    return { nodes, links: graphData.links };
-  }, [graphData, statusMap]);
 
-  // Custom node object — soft sphere
+    let rawNodes = graphData.nodes;
+    let rawLinks = graphData.links;
+
+    const hasStatus = Object.keys(statusMap).length > 0;
+
+    // After simulation: hard-cap to NODE_HARD_CAP, prioritizing Default > Distressed > Safe
+    if (hasStatus) {
+      const defaults = [];
+      const distressed = [];
+      const safe = [];
+      for (const n of rawNodes) {
+        const st = statusMap[n.id];
+        if (st === "Default") defaults.push(n);
+        else if (st === "Distressed") distressed.push(n);
+        else safe.push(n);
+      }
+      // Sort each bucket by total_assets desc so we keep the biggest
+      const byAssets = (a, b) => (b.total_assets || 0) - (a.total_assets || 0);
+      defaults.sort(byAssets);
+      distressed.sort(byAssets);
+      safe.sort(byAssets);
+
+      const cap = NODE_HARD_CAP;
+      const picked = [];
+      // Take all defaults first (up to cap)
+      picked.push(...defaults.slice(0, cap));
+      // Fill remaining with distressed
+      const remaining1 = cap - picked.length;
+      if (remaining1 > 0) picked.push(...distressed.slice(0, remaining1));
+      // Fill remaining with safe (green)
+      const remaining2 = cap - picked.length;
+      if (remaining2 > 0) picked.push(...safe.slice(0, remaining2));
+
+      const kept = new Set(picked.map((n) => n.id));
+      rawNodes = picked;
+      rawLinks = rawLinks.filter(
+        (l) =>
+          kept.has(l.source?.id ?? l.source) &&
+          kept.has(l.target?.id ?? l.target)
+      );
+    }
+    // Pre-simulation lite mode: keep only the top-N nodes by total_assets
+    else if (maxNodes < rawNodes.length) {
+      const sorted = [...rawNodes].sort(
+        (a, b) => (b.total_assets || 0) - (a.total_assets || 0)
+      );
+      const kept = new Set(sorted.slice(0, maxNodes).map((n) => n.id));
+      rawNodes = sorted.slice(0, maxNodes);
+      rawLinks = rawLinks.filter(
+        (l) =>
+          kept.has(l.source?.id ?? l.source) &&
+          kept.has(l.target?.id ?? l.target)
+      );
+    }
+
+    const nodes = rawNodes.map((n) => {
+      const val = Math.max(Math.log10(n.total_assets || 1e9) - 8, 0.8);
+      let color;
+
+      // During contagion animation — only revealed nodes get their status color
+      if (contagionActive && contagionSet) {
+        if (contagionSet.has(n.id)) {
+          const st = statusMap[n.id];
+          color = STATUS_COLORS[st] || STATUS_COLORS.Safe;
+        } else {
+          // Not yet revealed — dim neutral color
+          color = "rgba(60,60,80,0.6)";
+        }
+      } else if (n.region === "Global") {
+        color = STATUS_COLORS.CCP;
+      } else if (hasStatus) {
+        color = STATUS_COLORS[statusMap[n.id]] || STATUS_COLORS.Safe;
+      } else {
+        color = REGION_COLORS[n.region] || REGION_COLORS.US;
+      }
+      return { ...n, color, val };
+    });
+    return { nodes, links: rawLinks };
+  }, [graphData, statusMap, maxNodes, contagionActive, contagionSet]);
+
+  // Expose camera helpers to parent via ref
+  useImperativeHandle(ref, () => ({
+    /** Smoothly move camera to look at a specific node id */
+    focusNode(nodeId, distance = 120) {
+      const fg = fgRef.current;
+      if (!fg) return;
+      const node = enriched.nodes.find((n) => n.id === nodeId);
+      if (!node || node.x == null) return;
+      fg.cameraPosition(
+        { x: node.x, y: node.y, z: node.z + distance },
+        { x: node.x, y: node.y, z: node.z },
+        1200
+      );
+    },
+    /** Zoom out to fit entire graph */
+    zoomToFit(duration = 800) {
+      fgRef.current?.zoomToFit(duration, 80);
+    },
+  }), [enriched.nodes]);
+
+  // Custom node object — shared geometry, instanced-friendly
   const nodeThreeObject = useCallback((node) => {
-    const radius = (node.val || 1) * 1.5;
-    const geo = new THREE.SphereGeometry(radius, 16, 16);
-    const mat = new THREE.MeshPhongMaterial({
+    const radius = (node.val || 1) * 1.2;
+    const geo = radius > 2.5 ? geometries.large : radius > 1.5 ? geometries.medium : geometries.small;
+    const mat = new THREE.MeshLambertMaterial({
       color: node.color,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
       emissive: node.color,
-      emissiveIntensity: 0.35,
+      emissiveIntensity: 0.25,
     });
-    return new THREE.Mesh(geo, mat);
-  }, []);
-
-  // Link particles (glowing data flow)
-  const linkDirectionalParticles = 2;
-  const linkDirectionalParticleWidth = 1.2;
-  const linkDirectionalParticleSpeed = 0.004;
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.scale.setScalar(radius);
+    return mesh;
+  }, [geometries]);
 
   // Zoom to fit after data loads
   useEffect(() => {
     if (fgRef.current && mounted && enriched.nodes.length > 0) {
       const timer = setTimeout(() => {
         fgRef.current.zoomToFit(600, 80);
-      }, 800);
+      }, 1000);
       return () => clearTimeout(timer);
     }
   }, [mounted, enriched.nodes.length]);
+
+  // Only show particles on top ~200 links (by value) to save GPU
+  const particleFilter = useMemo(() => {
+    if (!enriched.links || enriched.links.length === 0) return new Set();
+    const sorted = [...enriched.links].sort((a, b) => (b.value || 0) - (a.value || 0));
+    const topN = sorted.slice(0, Math.min(150, sorted.length));
+    return new Set(topN.map((l) => `${l.source?.id ?? l.source}-${l.target?.id ?? l.target}`));
+  }, [enriched.links]);
+
+  // Per-link random speed so transactions fire from random places, not all in sync
+  const linkSpeedMap = useMemo(() => {
+    const map = new Map();
+    if (!enriched.links) return map;
+    for (const l of enriched.links) {
+      const key = `${l.source?.id ?? l.source}-${l.target?.id ?? l.target}`;
+      // Random speed between 0.001 and 0.008
+      map.set(key, 0.001 + Math.random() * 0.007);
+    }
+    return map;
+  }, [enriched.links]);
 
   if (!mounted) return null;
 
@@ -86,25 +206,97 @@ export default function NetworkGraph3D({
       backgroundColor="rgba(0,0,0,0)"
       nodeThreeObject={nodeThreeObject}
       nodeLabel={(n) =>
-        `<div style="background:rgba(13,13,20,0.9);padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);font-family:Inter,sans-serif;font-size:12px;">
-          <strong>${n.name}</strong><br/>
-          <span style="color:#888">Region: ${n.region}</span><br/>
-          <span style="color:#888">Assets: $${(n.total_assets / 1e9).toFixed(1)}B</span>
+        `<div style="background:rgba(10,10,18,0.92);padding:8px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);font-family:Inter,sans-serif;font-size:12px;line-height:1.5;backdrop-filter:blur(8px);">
+          <strong style="color:#fff">${n.name}</strong><br/>
+          <span style="color:${REGION_COLORS[n.region] || '#888'}">${n.region}</span> · 
+          <span style="color:#999">$${(n.total_assets / 1e9).toFixed(1)}B</span>
         </div>`
       }
-      linkColor={() => "rgba(50,224,196,0.12)"}
-      linkWidth={0.3}
-      linkOpacity={0.15}
-      linkDirectionalParticles={linkDirectionalParticles}
-      linkDirectionalParticleWidth={linkDirectionalParticleWidth}
-      linkDirectionalParticleSpeed={linkDirectionalParticleSpeed}
-      linkDirectionalParticleColor={() => "#32e0c4"}
+      linkColor={(link) => {
+        const src = link.source?.id ?? link.source;
+        const tgt = link.target?.id ?? link.target;
+        const key = `${src}-${tgt}`;
+        const keyRev = `${tgt}-${src}`;
+        // During contagion, only show links that have been revealed
+        if (contagionActive && contagionLinks) {
+          if (contagionLinks.has(key) || contagionLinks.has(keyRev)) {
+            const srcHit = statusMap[src] === "Default" || statusMap[src] === "Distressed";
+            const tgtHit = statusMap[tgt] === "Default" || statusMap[tgt] === "Distressed";
+            if (srcHit && tgtHit) return "rgba(255,42,109,0.7)";
+            if (srcHit || tgtHit) return "rgba(255,140,0,0.5)";
+            return "rgba(50,224,196,0.35)";
+          }
+          return "rgba(40,40,60,0.04)";
+        }
+        return particleFilter.has(key) ? "rgba(50,224,196,0.25)" : "rgba(50,224,196,0.08)";
+      }}
+      linkWidth={(link) => {
+        if (!contagionActive || !contagionLinks) return 0.4;
+        const src = link.source?.id ?? link.source;
+        const tgt = link.target?.id ?? link.target;
+        const key = `${src}-${tgt}`;
+        const keyRev = `${tgt}-${src}`;
+        if (contagionLinks.has(key) || contagionLinks.has(keyRev)) return 1.2;
+        return 0.1;
+      }}
+      linkOpacity={0.35}
+      linkDirectionalParticles={(link) => {
+        const src = link.source?.id ?? link.source;
+        const tgt = link.target?.id ?? link.target;
+        const key = `${src}-${tgt}`;
+        const keyRev = `${tgt}-${src}`;
+        // During contagion, fire particles only along revealed links
+        if (contagionActive && contagionLinks) {
+          if (contagionLinks.has(key) || contagionLinks.has(keyRev)) {
+            const srcHit = (statusMap[src] === "Default" || statusMap[src] === "Distressed");
+            const tgtHit = (statusMap[tgt] === "Default" || statusMap[tgt] === "Distressed");
+            if (srcHit || tgtHit) return 3;
+          }
+          return 0;
+        }
+        return particleFilter.has(key) ? (1 + Math.floor(Math.random() * 2)) : 0;
+      }}
+      linkDirectionalParticleWidth={(link) => {
+        if (!contagionActive || !contagionLinks) return 0.8;
+        const src = link.source?.id ?? link.source;
+        const tgt = link.target?.id ?? link.target;
+        const key = `${src}-${tgt}`;
+        const keyRev = `${tgt}-${src}`;
+        if (contagionLinks.has(key) || contagionLinks.has(keyRev)) return 2.0;
+        return 0.8;
+      }}
+      linkDirectionalParticleSpeed={(link) => {
+        if (contagionActive) return 0.003;
+        const key = `${link.source?.id ?? link.source}-${link.target?.id ?? link.target}`;
+        return linkSpeedMap.get(key) || 0.003;
+      }}
+      linkDirectionalParticleColor={(link) => {
+        if (!contagionActive || !contagionLinks) return "#32e0c4";
+        const src = link.source?.id ?? link.source;
+        const tgt = link.target?.id ?? link.target;
+        const key = `${src}-${tgt}`;
+        const keyRev = `${tgt}-${src}`;
+        if (contagionLinks.has(key) || contagionLinks.has(keyRev)) {
+          const srcHit = (statusMap[src] === "Default" || statusMap[src] === "Distressed");
+          return srcHit ? "#ff2a6d" : "#ffaa00";
+        }
+        return "#32e0c4";
+      }}
       onNodeClick={onNodeClick}
       enableNodeDrag={false}
-      warmupTicks={60}
-      cooldownTime={3000}
-      d3AlphaDecay={0.04}
-      d3VelocityDecay={0.3}
+      warmupTicks={120}
+      cooldownTime={8000}
+      d3AlphaDecay={0.015}
+      d3VelocityDecay={0.25}
+      d3AlphaMin={0.001}
+      dagMode={null}
+      linkDistance={(link) => {
+        const val = link.value || 0;
+        return val > 0.5 ? 30 : val > 0.1 ? 60 : 120;
+      }}
+      nodeRelSize={1.5}
     />
   );
-}
+});
+
+export default NetworkGraph3D;

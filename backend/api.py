@@ -115,18 +115,40 @@ def _ndarray_to_list(v):
 
 def _clean_results(d: dict) -> dict:
     """Convert numpy arrays and other non-serializable types to JSON-safe."""
+    import math
+
+    def _sanitize_float(v):
+        """Replace NaN/Inf with None (JSON null)."""
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+
+    def _sanitize_list(lst):
+        return [
+            _sanitize_float(x) if isinstance(x, (int, float)) else x
+            for x in lst
+        ]
+
     out = {}
     for k, v in d.items():
         if isinstance(v, np.ndarray):
-            out[k] = v.tolist()
+            flat = v.tolist()
+            if isinstance(flat, list):
+                out[k] = _sanitize_list(flat)
+            else:
+                out[k] = _sanitize_float(flat)
         elif isinstance(v, dict):
             out[k] = _clean_results(v)
         elif isinstance(v, (np.integer,)):
             out[k] = int(v)
         elif isinstance(v, (np.floating,)):
-            out[k] = float(v)
+            out[k] = _sanitize_float(float(v))
+        elif isinstance(v, float):
+            out[k] = _sanitize_float(v)
         elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], np.ndarray):
-            out[k] = [x.tolist() for x in v]
+            out[k] = [_sanitize_list(x.tolist()) for x in v]
+        elif isinstance(v, list):
+            out[k] = _sanitize_list(v)
         elif k == "agents":
             # Skip non-serialisable agent objects
             continue
@@ -166,14 +188,31 @@ async def get_topology():
                 "leverage_ratio": float(row.get("leverage_ratio", 0)),
             })
 
-        # Build links (top edges by weight to avoid 50k+ links)
+        # Build links — keep top edges by weight, but guarantee every node
+        # has at least one connection so the graph looks connected.
         rows_idx, cols_idx = np.nonzero(W_dense)
         weights = W_dense[rows_idx, cols_idx]
-        # Keep top ~2000 edges
-        if len(weights) > 2000:
-            threshold = np.percentile(weights, 100 * (1 - 2000 / len(weights)))
+
+        MAX_EDGES = 3000
+        if len(weights) > MAX_EDGES:
+            threshold = np.percentile(weights, 100 * (1 - MAX_EDGES / len(weights)))
             mask = weights >= threshold
-            rows_idx, cols_idx, weights = rows_idx[mask], cols_idx[mask], weights[mask]
+        else:
+            mask = np.ones(len(weights), dtype=bool)
+
+        # Ensure every node has at least its strongest outgoing edge
+        connected = set(rows_idx[mask]) | set(cols_idx[mask])
+        for node_id in range(n):
+            if node_id not in connected:
+                # Find strongest edge for this node (outgoing or incoming)
+                out_mask = rows_idx == node_id
+                in_mask = cols_idx == node_id
+                node_mask = out_mask | in_mask
+                if node_mask.any():
+                    best = np.argmax(weights * node_mask)
+                    mask[best] = True
+
+        rows_idx, cols_idx, weights = rows_idx[mask], cols_idx[mask], weights[mask]
 
         links = []
         for s, t, w in zip(rows_idx, cols_idx, weights):
@@ -204,10 +243,8 @@ async def get_banks():
         if ML_AVAILABLE and GNN_MODEL_PATH.exists():
             try:
                 model = load_trained_model(GNN_MODEL_PATH, in_channels=7)
-                X = build_node_features(W_dense, df_enriched)
-                edge_index = build_edge_index(W_dense)
-                probs = predict_risk(model, X, edge_index)
-                risk_scores = probs
+                pred = predict_risk(model, W_dense, df_enriched)
+                risk_scores = pred["risk_probs"]
             except Exception:
                 pass
 
@@ -257,10 +294,10 @@ async def run_simulation(req: SimulationRequest):
                 trigger_idx=req.trigger_idx,
                 loss_severity=req.severity,
                 n_steps=req.n_steps,
-                sigma=req.sigma,
-                panic_rate=req.panic_rate,
-                fire_sale_alpha=req.fire_sale_alpha,
-                margin_multiplier=req.margin_multiplier,
+                uncertainty_sigma=req.sigma,
+                panic_threshold=req.panic_rate,
+                alpha=req.fire_sale_alpha,
+                margin_sensitivity=req.margin_multiplier,
                 max_iterations=req.max_iter,
                 convergence_threshold=req.tolerance,
                 distress_threshold=req.distress_threshold,
@@ -290,14 +327,13 @@ async def run_climate(req: ClimateRequest):
         df = df.copy()
         assign_climate_exposure(df)
 
+        state = sim.compute_state_variables(W_dense, df)
+
         results = run_transition_shock(
-            df=df,
-            W_dense=W_dense,
+            state, df,
             carbon_tax_severity=req.carbon_tax,
             green_subsidy=req.green_subsidy,
             use_intraday=req.use_intraday,
-            trigger_idx=req.trigger_idx,
-            loss_severity=req.severity,
             n_steps=req.n_steps,
         )
 
@@ -312,8 +348,7 @@ async def run_climate(req: ClimateRequest):
 async def run_game(req: GameRequest):
     """Run Morris & Shin strategic game under both regimes."""
     try:
-        results_opaque = run_game_simulation(
-            info_regime="OPAQUE",
+        common = dict(
             n_banks=req.n_banks,
             n_steps=req.n_steps,
             true_solvency=req.true_solvency,
@@ -322,23 +357,12 @@ async def run_game(req: GameRequest):
             risk_aversion_mean=req.risk_aversion,
             private_noise_std=req.noise_std,
             fire_sale_haircut=req.haircut,
-            margin_pressure_rate=req.margin_pressure,
-            interbank_exposure_usd=req.exposure,
+            margin_volatility=req.margin_pressure,
+            initial_exposure_per_bank=req.exposure,
         )
 
-        results_transparent = run_game_simulation(
-            info_regime="TRANSPARENT",
-            n_banks=req.n_banks,
-            n_steps=req.n_steps,
-            true_solvency=req.true_solvency,
-            interest_rate=req.interest_rate,
-            recovery_rate=req.recovery_rate,
-            risk_aversion_mean=req.risk_aversion,
-            private_noise_std=req.noise_std,
-            fire_sale_haircut=req.haircut,
-            margin_pressure_rate=req.margin_pressure,
-            interbank_exposure_usd=req.exposure,
-        )
+        results_opaque = run_game_simulation(info_regime="OPAQUE", **common)
+        results_transparent = run_game_simulation(info_regime="TRANSPARENT", **common)
 
         return {
             "opaque": _clean_results(results_opaque),
@@ -361,16 +385,15 @@ async def get_gnn_risk():
     try:
         W_dense, df = _load_network()
         model = load_trained_model(GNN_MODEL_PATH, in_channels=7)
-        X = build_node_features(W_dense, df)
-        edge_index = build_edge_index(W_dense)
-        probs = predict_risk(model, X, edge_index)
+        pred = predict_risk(model, W_dense, df)
+        risk_probs = pred["risk_probs"]
 
         scores = []
         for i, row in df.iterrows():
             scores.append({
                 "id": int(i),
                 "name": str(row["bank_name"]),
-                "risk_score": float(probs[i]),
+                "risk_score": float(risk_probs[i]),
             })
 
         return {"scores": scores}
