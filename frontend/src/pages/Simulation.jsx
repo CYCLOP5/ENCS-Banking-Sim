@@ -118,25 +118,28 @@ function Toggle({ label, checked, onChange, description }) {
 /* ── Default Ticker ────────────────────────────────────────────── */
 function DefaultTicker({ defaults = [], distressed = [] }) {
   if (defaults.length === 0 && distressed.length === 0) return null;
-  // Show at most 80 names to keep DOM light; full list is in detail panel
-  const visibleDefaults = defaults.slice(0, 80).map(n => ({ name: n, type: 'default' }));
-  const visibleDistressed = distressed.slice(0, 40).map(n => ({ name: n, type: 'distressed' }));
+  // Show at most 30 names to keep DOM light; full list is in detail panel
+  const visibleDefaults = defaults.slice(0, 30).map(n => ({ name: n, type: 'default' }));
+  const visibleDistressed = distressed.slice(0, 15).map(n => ({ name: n, type: 'distressed' }));
   const visible = [...visibleDefaults, ...visibleDistressed];
   const doubled = [...visible, ...visible];
-  // Scale duration: ~1.2s per name, minimum 40s
-  const duration = Math.max(40, visible.length * 1.2);
+  // Scale duration: ~2s per name, minimum 50s — slower = less CPU
+  const duration = Math.max(50, visible.length * 2);
   return (
     <div className="overflow-hidden whitespace-nowrap mask-gradient">
       <div
         className="inline-flex gap-6"
-        style={{ animation: `ticker-scroll ${duration}s linear infinite` }}
+        style={{
+          animation: `ticker-scroll ${duration}s linear infinite`,
+          willChange: "transform",
+        }}
       >
         {doubled.map((item, i) => (
           <span
             key={i}
             className="inline-flex items-center gap-1.5 text-xs font-[family-name:var(--font-mono)]"
           >
-            <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${
+            <span className={`h-1.5 w-1.5 rounded-full ${
               item.type === 'distressed' ? 'bg-orange-500' : 'bg-crisis-red'
             }`} />
             <span className={item.type === 'distressed' ? 'text-orange-500' : 'text-crisis-red'}>

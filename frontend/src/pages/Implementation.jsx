@@ -332,7 +332,7 @@ export default function Implementation() {
       <section className="mb-24">
         <SectionHeader
           icon={Network}
-          title="Layer 2: Network Toplogy Reconstruction"
+          title="Layer 2: Network Topology Reconstruction"
           subtitle="Inferring hidden interbank liabilities using Gravity Models and RAS balancing."
         />
         
@@ -367,8 +367,11 @@ export default function Implementation() {
               <strong className="text-stability-green">“Super-Core”</strong> nodes (Top 30 by
               total assets) are fully connected to each other, while{" "}
               <strong className="text-neon-purple">“Periphery”</strong> banks only lend
-              upstream to the Core. Bilateral exposures are then fitted by
-              maximizing entropy subject to balance sheet constraints:
+              upstream to the Core. Bilateral exposures are fitted via{" "}
+              <strong>minimum cross-entropy</strong> (KL-divergence) — finding the matrix 
+              closest to a gravity-model prior while satisfying balance sheet constraints.
+              Unlike maximum entropy (which dangerously spreads risk uniformly), this 
+              preserves realistic concentration in systemically important nodes:
             </p>
             <div className="p-4 bg-black/30 rounded-lg border border-white/5 my-4">
                <Tex display>
@@ -386,11 +389,11 @@ export default function Implementation() {
             </p>
             <div className="flex gap-4 text-xs font-mono text-text-muted mt-2">
                <div className="flex items-center gap-1">
-                 <div className="w-2 h-2 rounded-full bg-stability-green" />
-                 US Banks (Blue)
+                 <div className="w-2 h-2 rounded-full bg-[#00e5ff]" />
+                 US Banks (Cyan)
                </div>
                <div className="flex items-center gap-1">
-                 <div className="w-2 h-2 rounded-full bg-neon-purple" />
+                 <div className="w-2 h-2 rounded-full bg-[#7c4dff]" />
                  EU Banks (Purple)
                </div>
             </div>

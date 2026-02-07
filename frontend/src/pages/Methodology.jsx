@@ -131,7 +131,7 @@ export default function Methodology() {
             <div className="grid grid-cols-3 gap-3 mt-4">
               {[
                 { status: "Safe", color: "text-stability-green", desc: "p* = p̄" },
-                { status: "Distressed", color: "text-amber-warn", desc: "Equity < 5%" },
+                { status: "Distressed", color: "text-amber-warn", desc: "≥50% equity lost" },
                 { status: "Default", color: "text-crisis-red", desc: "p* < p̄" },
               ].map(({ status, color, desc }) => (
                 <div key={status} className="glass rounded-lg p-3 text-center">
@@ -157,10 +157,10 @@ export default function Methodology() {
               </h4>
               <p className="text-text-secondary text-sm leading-relaxed mb-3">
                 The Rust engine explicitly calculates <b className="text-white">variation margin calls</b>{" "}
-                when asset prices drop. For each bank <Tex>{"i"}</Tex>:
+                when asset prices drop. For each bank <Tex>{"i"}</Tex> with derivatives notional <Tex>{"D_i"}</Tex>:
               </p>
               <TexBlock>
-                {"M_i = \\text{Exposure}_i \\cdot (1 - P_t) \\cdot \\delta_{\\text{sens}}"}
+                {"M_i = D_i \\cdot (1 - P_t) \\cdot m_{\\text{sens}}"}
               </TexBlock>
               <p className="text-text-secondary text-sm leading-relaxed">
                 If external assets are insufficient to meet the margin call, the bank
@@ -288,7 +288,7 @@ export default function Methodology() {
               </div>
               <p className="text-text-muted text-xs mt-2">
                 Where <Tex>{"r"}</Tex> = interest rate, <Tex>{"R"}</Tex> = recovery rate,{" "}
-                and <Tex>{"m"}</Tex> = <b className="text-white">CCP margin pressure</b> — a term that
+                and <Tex>{"m"}</Tex> = <b className="text-white">margin pressure</b> — a liquidity premium that
                 rises with market-wide volatility and accumulated fire-sale damage,
                 coupling the clearing layer directly into strategic decisions.
               </p>

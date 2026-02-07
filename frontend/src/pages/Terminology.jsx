@@ -17,6 +17,14 @@ import {
   BarChart3,
   AlertTriangle,
   Network,
+  Layers,
+  Orbit,
+  RefreshCw,
+  Dices,
+  Leaf,
+  Bomb,
+  Building2,
+  CircleDot,
 } from "lucide-react";
 import GlassPanel from "../components/GlassPanel";
 import katex from "katex";
@@ -120,7 +128,7 @@ const TERMS = [
       'A sudden climate disaster (or Carbon Tax) that makes "safe" fossil-fuel assets worthless overnight — the climate version of a Black Swan.',
     technical:
       'A "Climate Value-at-Risk" (CVaR) shock applied to the external_assets vector. It specifically penalizes banks with high carbon-intensity scores, creating stranded assets.',
-    math: "E_i' = E_i - \\tau_{\\text{carbon}} \\cdot c_i \\cdot A_i^{\\text{ext}}",
+    math: "\\Delta e_i = -0.20\\cdot A_i \\cdot c_i \\cdot \\tau + 0.15\\cdot A_i \\cdot (1-c_i) \\cdot s",
   },
   {
     id: "leverage",
@@ -198,6 +206,94 @@ const TERMS = [
     technical:
       "An iterative algorithm inspired by PageRank that quantifies systemic impact. Each node's distress propagates proportionally to bilateral exposures, creating a cascade metric bounded in [0, 1].",
     math: "h_j^{(t+1)} = \\min\\!\\left(1,\\; h_j^{(t)} + \\sum_{i} W_{ji} \\cdot h_i^{(t)}\\right)",
+  },
+  {
+    id: "core-periphery",
+    title: "Core-Periphery Structure",
+    category: "Topology",
+    icon: Layers,
+    simple:
+      'The financial network isn\'t flat — a small "super-core" of giant banks are connected to everyone, while smaller banks only connect upward. It\'s a pyramid of risk.',
+    technical:
+      "A tiered network model: Super-Core (top 30) are fully connected, Core banks connect to Core + Super-Core, Periphery connects only upstream. This captures the empirical fat-tailed degree distribution of real interbank networks.",
+    math: "\\text{Super-Core: } K_{30},\\quad \\text{Core } \\to \\{\\text{Core} \\cup \\text{SC}\\},\\quad \\text{Periphery } \\to \\{\\text{Core} \\cup \\text{SC}\\}",
+  },
+  {
+    id: "gravity-model",
+    title: "Gravity Model",
+    category: "Topology",
+    icon: Orbit,
+    simple:
+      'Just like planets attract each other based on mass and distance, banks "attract" interbank lending based on their size and geographic proximity.',
+    technical:
+      "Bilateral exposures are estimated as L_ij \\propto (Liab_i \\times Asset_j) / distance, where distance = 1.0 for same-region and 10.0 for cross-region. The resulting matrix is then balanced via RAS/Sinkhorn-Knopp to match reported regulatory totals.",
+    math: "L_{ij} \\propto \\frac{\\text{Liab}_i \\times \\text{Asset}_j}{d(i,j)}",
+  },
+  {
+    id: "picard-iteration",
+    title: "Picard / Fictitious Default",
+    category: "Physics",
+    icon: RefreshCw,
+    simple:
+      'The computer guesses who defaults, recalculates everyone\'s finances, then guesses again — over and over until the answer stops changing. Like solving a puzzle by trial and error.',
+    technical:
+      "A fixed-point iteration scheme for computing the Eisenberg-Noe clearing vector. Starting from full payment, iteratively apply p = min(L, max(0, e + \\Pi^T p)) until convergence (|p_{k+1} - p_k| < \\epsilon). Guaranteed to converge by lattice-theoretic monotonicity.",
+    math: "p^{(k+1)}_i = \\min\\!\\left(\\bar{p}_i,\\; \\max\\!\\left(0,\\; e_i + \\sum_j \\pi_{ji} \\, p^{(k)}_j\\right)\\right)",
+  },
+  {
+    id: "monte-carlo",
+    title: "Monte Carlo Simulation",
+    category: "AI",
+    icon: Dices,
+    simple:
+      'Roll the dice 500 times with different disasters, record what happens each time, and train an AI on the results. The more chaos you simulate, the smarter the AI gets.',
+    technical:
+      "Stochastic simulation across 500 runs with 3-regime sampling (Calm 20%, Moderate 35%, Stressed 45%). Random perturbations to topology, trigger selection, and severity generate diverse training graphs for the GCN.",
+    math: "\\hat{P}(\\text{default}) = \\frac{1}{N} \\sum_{k=1}^{N} \\mathbb{1}[\\text{bank}_i \\in \\mathcal{D}_k]",
+  },
+  {
+    id: "greenwashing",
+    title: "Greenwashing",
+    category: "Climate",
+    icon: Leaf,
+    simple:
+      'Banks pretend to be "green" by pledging ESG targets, making their carbon score look better on paper — but when the real climate shock hits, the discount isn\'t enough to save them.',
+    technical:
+      "In the model, the top 30 banks (by total assets) reduce their reported carbon_score by 10% — a Tier-1 greenwashing discount. This makes them appear less exposed to transition risk, but the modest reduction is insufficient to prevent cascading defaults under a severe carbon tax.",
+    math: "c_i^{\\text{reported}} = c_i - 0.10 \\quad \\text{for } i \\in \\text{Top-30}",
+  },
+  {
+    id: "stranded-assets",
+    title: "Stranded Assets",
+    category: "Climate",
+    icon: Bomb,
+    simple:
+      'Fossil fuel investments that suddenly become worthless — like discovering the gold mine you bought is actually full of dirt. A carbon tax can strand trillions overnight.',
+    technical:
+      "Assets that suffer unanticipated write-downs due to regulatory or market shifts in the energy transition. In the simulation, brown_assets = total_assets \\times 0.20 \\times carbon_score, representing the fraction of the balance sheet exposed to stranding under a carbon tax.",
+    math: "\\text{Stranded}_i = A_i \\cdot 0.20 \\cdot c_i \\cdot \\tau",
+  },
+  {
+    id: "tbtf",
+    title: "Too-Big-to-Fail (TBTF)",
+    category: "Regulation",
+    icon: Building2,
+    simple:
+      'Some banks are so enormous that if they fail, the entire economy collapses — so governments are forced to bail them out. This creates a perverse incentive to grow bigger.',
+    technical:
+      "Institutions whose failure would impose unacceptable externalities on the financial system. In AEGIS, TBTF is quantified by out-strength (total interbank obligations): the trigger bank selection in stressed MC regimes targets the top-30 by this metric.",
+    math: "\\text{TBTF}_i = \\sum_{j} W_{ij} \\quad (\\text{out-strength})",
+  },
+  {
+    id: "clearing-vector",
+    title: "Clearing Vector",
+    category: "Physics",
+    icon: CircleDot,
+    simple:
+      'The final answer to "how much does everyone actually pay?" after all the dominoes have fallen. It\'s the equilibrium state of the financial system after a crisis.',
+    technical:
+      "The vector p* that satisfies limited liability (p_i \\leq L_i) and absolute priority (equity is residual). It represents the unique greatest fixed-point of the clearing map, computed via Picard iteration until convergence.",
+    math: "p^*_i = \\min(\\bar{p}_i,\\; e_i + (\\Pi^\\top p^*)_i) \\quad \\forall i",
   },
 ];
 
@@ -304,7 +400,7 @@ export default function Terminology() {
       </motion.div>
 
       {/* Bento Grid */}
-      <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <AnimatePresence mode="popLayout">
           {filtered.map((term, i) => {
             const style = CATEGORY_STYLE[term.category] || CATEGORY_STYLE.Risk;
@@ -314,13 +410,10 @@ export default function Terminology() {
             return (
               <motion.div
                 key={term.id}
-                layout
-                layoutId={term.id}
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ type: "spring", damping: 25, stiffness: 300, delay: i * 0.03 }}
-                className="break-inside-avoid"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.25, delay: i * 0.02 }}
               >
                 <GlassPanel
                   className={`cursor-pointer transition-all duration-300 hover:border-white/15 ${
