@@ -101,22 +101,27 @@ def status_to_label(status_array: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Multiprocessing helpers — data shared via fork (copy-on-write on Linux)
+# Multiprocessing helpers — shared data passed via initializer for forkserver
 # ---------------------------------------------------------------------------
 
-_SHARED: dict = {}  # populated by generate_dataset before pool creation
+_SHARED: dict = {}  # populated per-worker by _mp_worker_init
 
 
-def _mp_worker_init():
-    """Limit per-worker OpenMP / MKL threads to avoid contention."""
+def _mp_worker_init(shared_data):
+    """Initialise worker: store shared data and limit thread counts."""
+    import os
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
     torch.set_num_threads(1)
+    _SHARED.update(shared_data)
 
 
 def _single_mc_run(args):
     """
     Execute one Monte Carlo simulation run.
-    Designed for multiprocessing.Pool — reads from module-level _SHARED dict
-    which is inherited via fork.
+    Reads from module-level _SHARED dict populated by _mp_worker_init.
     """
     run_idx, noise_pct, n_steps, seed_base = args
 
@@ -186,16 +191,11 @@ def _single_mc_run(args):
     except Exception:
         return None
 
-    # ── Build PyG graph ───────────────────────────────────────────────
+    # ── Return raw numpy arrays (avoid pickling torch tensors through pipe) ─
     node_feats = build_node_features(W_noisy, df)
     labels = status_to_label(results["status"])
 
-    data = Data(
-        x=torch.tensor(node_feats, dtype=torch.float32),
-        edge_index=torch.tensor(edge_index_base, dtype=torch.long),
-        y=torch.tensor(labels, dtype=torch.long),
-    )
-    return (data, regime)
+    return (node_feats, labels, edge_index_base, regime)
 
 
 def generate_dataset(
@@ -218,8 +218,6 @@ def generate_dataset(
       - STRESSED (30%): high severity, full margins & fire-sales,
                         top-connected triggers → mass default.
     """
-    global _SHARED
-
     print("\n" + "=" * 60)
     print(f"GNN DATA GENERATION — {n_runs} Monte Carlo runs  (3 regimes)")
     print("=" * 60)
@@ -238,18 +236,16 @@ def generate_dataset(
     pool_small = rank[min(200, n) :]
     pool_all = np.arange(n)
 
-    # ── Shared data — inherited by workers via fork (COW) ─────────────
-    _SHARED.update(
-        {
-            "W_base": W_base,
-            "df": df,
-            "edge_index": edge_index_base,
-            "pool_top30": pool_top30,
-            "pool_mid": pool_mid,
-            "pool_small": pool_small,
-            "pool_all": pool_all,
-        }
-    )
+    # ── Shared data — passed to workers via initializer ───────────────
+    shared_data = {
+        "W_base": W_base,
+        "df": df,
+        "edge_index": edge_index_base,
+        "pool_top30": pool_top30,
+        "pool_mid": pool_mid,
+        "pool_small": pool_small,
+        "pool_all": pool_all,
+    }
 
     if n_workers is None:
         n_workers = min(mp.cpu_count(), 12)
@@ -267,16 +263,30 @@ def generate_dataset(
 
     print(f"  Workers: {n_workers}  |  Chunksize: {chunksize}")
 
-    with mp.Pool(processes=n_workers, initializer=_mp_worker_init) as pool:
+    # Use forkserver to avoid deadlocks from fork + PyTorch internal threads
+    ctx = mp.get_context("forkserver")
+
+    with ctx.Pool(
+        processes=n_workers,
+        initializer=_mp_worker_init,
+        initargs=(shared_data,),
+        maxtasksperchild=50,  # recycle workers to prevent resource leaks
+    ) as pool:
         results_iter = pool.imap_unordered(
             _single_mc_run, args_list, chunksize=chunksize
         )
         for i, result in enumerate(results_iter):
             if result is not None:
-                data, regime = result
+                node_feats, labels, ei, regime = result
+                # Build PyG Data in the main process (no torch pickling)
+                data = Data(
+                    x=torch.tensor(node_feats, dtype=torch.float32),
+                    edge_index=torch.tensor(ei, dtype=torch.long),
+                    y=torch.tensor(labels, dtype=torch.long),
+                )
                 dataset.append(data)
                 regime_counts[regime] += 1
-                for lbl in data.y.numpy():
+                for lbl in labels:
                     label_counts[int(lbl)] += 1
             else:
                 failed += 1
