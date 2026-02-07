@@ -133,13 +133,11 @@ fn apply_shock(state: &mut NetworkState, trigger_idx: usize, severity: f64) {
     state.equity = &state.total_assets - &state.total_liabilities;
 }
 
-#[pyfunction]
-#[pyo3(signature = (state, t, sigma=0.05, panic_threshold=0.10, alpha=0.005,
-                     max_clearing_iter=100, convergence_tol=1e-5,
-                     distress_threshold=0.5, margin_sensitivity=1.0))]
-fn run_intraday_step(
+/// Internal implementation — takes a plain ndarray reference for initial_equity.
+fn run_intraday_step_impl(
     state: &mut NetworkState,
     t: usize,
+    initial_equity: &Array1<f64>,
     sigma: f64,
     panic_threshold: f64,
     alpha: f64,
@@ -174,7 +172,6 @@ fn run_intraday_step(
     let mut total_received_per_bank = Array1::<f64>::zeros(n);   
 
     let mut total_withdrawn_global = 0.0_f64;
-    let mut runs_count: usize = 0;
 
     for i in 0..n {
         for j in 0..n {
@@ -190,8 +187,6 @@ fn run_intraday_step(
 
                 total_withdrawn_global += withdrawn;
                 state.w[[i, j]] = 0.0; 
-
-                runs_count += 1;
             }
         }
     }
@@ -285,7 +280,7 @@ fn run_intraday_step(
         }
     }
 
-    let initial_equity_snapshot = state.equity.clone();
+    let initial_eq = initial_equity;
     let mut n_defaults: usize = 0;
     let mut n_distressed: usize = 0;
     let mut total_equity_loss = 0.0_f64;
@@ -295,10 +290,9 @@ fn run_intraday_step(
             n_defaults += 1;
             total_equity_loss += state.equity[i].abs();
         } else {
-
-            let original_eq = state.total_assets[i] - state.total_liabilities[i];
-            if original_eq > 0.0 {
-                let ratio = initial_equity_snapshot[i] / original_eq;
+            // Compare against pre-shock initial equity for distress detection
+            if initial_eq[i] > 0.0 {
+                let ratio = state.equity[i] / initial_eq[i];
                 if ratio < distress_threshold {
                     n_distressed += 1;
                 }
@@ -317,6 +311,30 @@ fn run_intraday_step(
         total_equity_loss,
         margin_calls_total,
     }
+}
+
+/// Python-facing wrapper for run_intraday_step_impl.
+#[pyfunction]
+#[pyo3(signature = (state, t, initial_equity, sigma=0.05, panic_threshold=0.10, alpha=0.005,
+                     max_clearing_iter=100, convergence_tol=1e-5,
+                     distress_threshold=0.5, margin_sensitivity=1.0))]
+fn run_intraday_step(
+    state: &mut NetworkState,
+    t: usize,
+    initial_equity: PyReadonlyArray1<f64>,
+    sigma: f64,
+    panic_threshold: f64,
+    alpha: f64,
+    max_clearing_iter: usize,
+    convergence_tol: f64,
+    distress_threshold: f64,
+    margin_sensitivity: f64,
+) -> StepResult {
+    let init_eq = initial_equity.as_array().to_owned();
+    run_intraday_step_impl(
+        state, t, &init_eq, sigma, panic_threshold, alpha,
+        max_clearing_iter, convergence_tol, distress_threshold, margin_sensitivity,
+    )
 }
 
 #[pyfunction]
@@ -348,15 +366,17 @@ fn run_full_simulation(
     let mut state = NetworkState::new(w, external_assets, total_liabilities, total_assets, derivatives_exposure);
 
     let initial_equity_saved: Vec<f64> = state.equity.to_vec();
+    let initial_equity_arr = Array1::from(initial_equity_saved.clone());
 
     apply_shock(&mut state, trigger_idx, severity);
 
     let mut step_results: Vec<StepResult> = Vec::with_capacity(n_steps);
 
     for t in 1..=n_steps {
-        let result = run_intraday_step(
+        let result = run_intraday_step_impl(
             &mut state,
             t,
+            &initial_equity_arr,
             sigma,
             panic_threshold,
             alpha,

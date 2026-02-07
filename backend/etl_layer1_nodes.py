@@ -33,10 +33,26 @@ def load_ffiec_schedule(schedule_name: str, date: str = FFIEC_DATE) -> pd.DataFr
 def safe_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors='coerce').fillna(0)
 def get_col(df: pd.DataFrame, *col_names) -> pd.Series:
-    for col in col_names:
-        if col in df.columns:
-            return safe_numeric(df[col])
-    return pd.Series(0, index=df.index)
+    """Extract a numeric column, coalescing multiple candidates per-row.
+    
+    For FFIEC data, banks file either RCFD (consolidated: domestic + foreign)
+    or RCON (domestic only).  When multiple column names are given, we take
+    the first non-null/non-zero value per row so every bank gets its best
+    available figure.
+    """
+    found = [col for col in col_names if col in df.columns]
+    if not found:
+        return pd.Series(0, index=df.index)
+    if len(found) == 1:
+        return safe_numeric(df[found[0]])
+    # Coalesce: take the first non-zero value across candidate columns
+    result = safe_numeric(df[found[0]]).copy()
+    for col in found[1:]:
+        vals = safe_numeric(df[col])
+        # Fill in where current result is zero/missing
+        mask = (result == 0) & (vals != 0)
+        result[mask] = vals[mask]
+    return result
 
 def load_eu_metadata() -> dict:
     """
@@ -77,16 +93,16 @@ def ingest_ffiec() -> pd.DataFrame:
     print(f"    Loaded {len(df_rc)} banks")
     df_us = pd.DataFrame()
     df_us['bank_id'] = df_rc['IDRSSD'].astype(str)
-    df_us['total_assets'] = get_col(df_rc, 'RCON2170', 'RCFD2170') * 1000  
-    df_us['total_liabilities'] = get_col(df_rc, 'RCON2948', 'RCFD2948') * 1000
-    df_us['equity_capital'] = get_col(df_rc, 'RCON3210', 'RCFD3210') * 1000
-    df_us['total_deposits'] = get_col(df_rc, 'RCON2200', 'RCFN2200') * 1000
-    df_us['trading_assets'] = get_col(df_rc, 'RCON3545', 'RCFD3545') * 1000
-    df_us['trading_liabilities'] = get_col(df_rc, 'RCON3548', 'RCFD3548') * 1000
-    df_us['securities_afs'] = get_col(df_rc, 'RCON1773', 'RCFD1773') * 1000
-    df_us['securities_htm'] = get_col(df_rc, 'RCONJA22', 'RCFDJA22') * 1000
-    df_us['loans_net'] = get_col(df_rc, 'RCONB529', 'RCFDB529') * 1000
-    df_us['other_borrowed'] = get_col(df_rc, 'RCON3190', 'RCFD3190') * 1000
+    df_us['total_assets'] = get_col(df_rc, 'RCFD2170', 'RCON2170') * 1000  
+    df_us['total_liabilities'] = get_col(df_rc, 'RCFD2948', 'RCON2948') * 1000
+    df_us['equity_capital'] = get_col(df_rc, 'RCFD3210', 'RCON3210') * 1000
+    df_us['total_deposits'] = get_col(df_rc, 'RCFD2200', 'RCON2200') * 1000
+    df_us['trading_assets'] = get_col(df_rc, 'RCFD3545', 'RCON3545') * 1000
+    df_us['trading_liabilities'] = get_col(df_rc, 'RCFD3548', 'RCON3548') * 1000
+    df_us['securities_afs'] = get_col(df_rc, 'RCFD1773', 'RCON1773') * 1000
+    df_us['securities_htm'] = get_col(df_rc, 'RCFDJA22', 'RCONJA22') * 1000
+    df_us['loans_net'] = get_col(df_rc, 'RCFDB529', 'RCONB529') * 1000
+    df_us['other_borrowed'] = get_col(df_rc, 'RCFD3190', 'RCON3190') * 1000
     print("  Loading Schedule RCE (Deposits)...")
     df_rce = load_ffiec_schedule("RCE")
     if not df_rce.empty and 'IDRSSD' in df_rce.columns:
@@ -104,9 +120,9 @@ def ingest_ffiec() -> pd.DataFrame:
         df_rcd['IDRSSD'] = df_rcd['IDRSSD'].astype(str)
         rcd_cols = pd.DataFrame()
         rcd_cols['bank_id'] = df_rcd['IDRSSD']
-        rcd_cols['trading_treasury'] = get_col(df_rcd, 'RCON3531', 'RCFD3531') * 1000
-        rcd_cols['trading_agency'] = get_col(df_rcd, 'RCON3532', 'RCFD3532') * 1000
-        rcd_cols['trading_other'] = get_col(df_rcd, 'RCON3541', 'RCFD3541') * 1000
+        rcd_cols['trading_treasury'] = get_col(df_rcd, 'RCFD3531', 'RCON3531') * 1000
+        rcd_cols['trading_agency'] = get_col(df_rcd, 'RCFD3532', 'RCON3532') * 1000
+        rcd_cols['trading_other'] = get_col(df_rcd, 'RCFD3541', 'RCON3541') * 1000
         df_us = df_us.merge(rcd_cols, on='bank_id', how='left')
         print(f"    Merged trading data")
     print("  Loading Schedule RCL (Derivatives)...")
@@ -146,9 +162,9 @@ def ingest_ffiec() -> pd.DataFrame:
         df_rco['IDRSSD'] = df_rco['IDRSSD'].astype(str)
         rco_cols = pd.DataFrame()
         rco_cols['bank_id'] = df_rco['IDRSSD']
-        rco_cols['unused_commitments'] = get_col(df_rco, 'RCON3814', 'RCFD3814') * 1000
-        rco_cols['standby_loc'] = get_col(df_rco, 'RCON3819', 'RCFD3819') * 1000
-        rco_cols['commercial_loc'] = get_col(df_rco, 'RCON3411', 'RCFD3411') * 1000
+        rco_cols['unused_commitments'] = get_col(df_rco, 'RCFD3814', 'RCON3814') * 1000
+        rco_cols['standby_loc'] = get_col(df_rco, 'RCFD3819', 'RCON3819') * 1000
+        rco_cols['commercial_loc'] = get_col(df_rco, 'RCFD3411', 'RCON3411') * 1000
         rco_cols['securities_lent'] = get_col(df_rco, 'RCFDB981', 'RCONB981') * 1000
         rco_cols['securities_borrowed'] = get_col(df_rco, 'RCFDB980', 'RCONB980') * 1000
         df_us = df_us.merge(rco_cols, on='bank_id', how='left')
@@ -194,13 +210,18 @@ def ingest_eba() -> pd.DataFrame:
     df_eu['bank_name'] = df_eu['bank_id'].map(eu_names)
     no_name = df_eu['bank_name'].isna()
     df_eu.loc[no_name, 'bank_name'] = df_eu.loc[no_name, 'bank_id'] + '_' + df_eu.loc[no_name, 'NSA']
-    cre_exposure = df_cre[df_cre['Item'] == '2520501'].copy()
+    # FIX: EBA data contains multiple periods (202409..202506).
+    # Only use the latest period to avoid ~4x asset inflation.
+    latest_cre_period = df_cre['Period'].max()
+    print(f"    Using latest period: {latest_cre_period}")
+    df_cre_latest = df_cre[df_cre['Period'] == latest_cre_period]
+    cre_exposure = df_cre_latest[df_cre_latest['Item'] == '2520501'].copy()
     cre_exposure['Amount'] = pd.to_numeric(cre_exposure['Amount'], errors='coerce')
     cre_agg = cre_exposure.groupby('LEI_Code')['Amount'].sum().reset_index()
     cre_agg.columns = ['bank_id', 'total_exposure_cre']
     cre_agg['total_exposure_cre'] = cre_agg['total_exposure_cre'] * 1e6  
     df_eu = df_eu.merge(cre_agg, on='bank_id', how='left')
-    cre_rwa = df_cre[df_cre['Item'] == '2520521'].copy()
+    cre_rwa = df_cre_latest[df_cre_latest['Item'] == '2520521'].copy()
     cre_rwa['Amount'] = pd.to_numeric(cre_rwa['Amount'], errors='coerce')
     rwa_agg = cre_rwa.groupby('LEI_Code')['Amount'].sum().reset_index()
     rwa_agg.columns = ['bank_id', 'rwa_credit']
@@ -212,7 +233,11 @@ def ingest_eba() -> pd.DataFrame:
     if sov_path.exists():
         df_sov = pd.read_csv(sov_path, dtype=str, low_memory=False)
         print(f"    Loaded {len(df_sov)} rows")
-        sov_exposure = df_sov[df_sov['Item'] == '2520810'].copy()  
+        # FIX: Use latest period only to avoid multi-period double-counting
+        latest_sov_period = df_sov['Period'].max()
+        print(f"    Using latest period: {latest_sov_period}")
+        df_sov_latest = df_sov[df_sov['Period'] == latest_sov_period]
+        sov_exposure = df_sov_latest[df_sov_latest['Item'] == '2520810'].copy()  
         sov_exposure['Amount'] = pd.to_numeric(sov_exposure['Amount'], errors='coerce')
         sov_agg = sov_exposure.groupby('LEI_Code')['Amount'].sum().reset_index()
         sov_agg.columns = ['bank_id', 'sovereign_exposure']
@@ -224,16 +249,49 @@ def ingest_eba() -> pd.DataFrame:
     if mrk_path.exists():
         df_mrk = pd.read_csv(mrk_path, dtype=str, low_memory=False)
         print(f"    Loaded {len(df_mrk)} rows")
-        mrk_exposure = df_mrk[df_mrk['Item'] == '2520401'].copy()
+        # FIX: Use latest period only to avoid multi-period double-counting
+        latest_mrk_period = df_mrk['Period'].max()
+        print(f"    Using latest period: {latest_mrk_period}")
+        df_mrk_latest = df_mrk[df_mrk['Period'] == latest_mrk_period]
+        mrk_exposure = df_mrk_latest[df_mrk_latest['Item'] == '2520401'].copy()
         mrk_exposure['Amount'] = pd.to_numeric(mrk_exposure['Amount'], errors='coerce')
         mrk_agg = mrk_exposure.groupby('LEI_Code')['Amount'].sum().reset_index()
         mrk_agg.columns = ['bank_id', 'market_risk_rwa']
         mrk_agg['market_risk_rwa'] = mrk_agg['market_risk_rwa'] * 1e6
         df_eu = df_eu.merge(mrk_agg, on='bank_id', how='left')
         print(f"    Market risk RWA: {df_eu['market_risk_rwa'].sum() / 1e12:.2f}T EUR")
-    df_eu['total_assets'] = df_eu['total_exposure_cre'].fillna(0)  
-    df_eu['total_liabilities'] = df_eu['total_assets'] * 0.95  
-    df_eu['equity_capital'] = df_eu['total_assets'] * 0.05
+
+    # ── Reconstruct EU balance sheets ──
+    # Total Assets = Credit Exposure + Sovereign Exposure (non-overlapping in EBA)
+    df_eu['total_assets'] = (
+        df_eu['total_exposure_cre'].fillna(0)
+        + df_eu['sovereign_exposure'].fillna(0)
+    )
+
+    # Equity = RWA × average CET1 ratio (14.5%, EBA Risk Dashboard avg for EU banks)
+    # This gives bank-specific leverage instead of flat 20× for everyone.
+    # Clamp to [3%, 15%] of total assets (Basel III leverage ratio floor / sanity cap).
+    AVG_CET1_RATIO = 0.145
+    df_eu['equity_capital'] = df_eu['rwa_credit'].fillna(0) * AVG_CET1_RATIO
+    # Fall back to 5% of assets for banks with zero RWA (shouldn't happen, but safe)
+    no_rwa = df_eu['equity_capital'] <= 0
+    df_eu.loc[no_rwa, 'equity_capital'] = df_eu.loc[no_rwa, 'total_assets'] * 0.05
+    # Enforce leverage ratio floor (3%) and sanity cap (15%)
+    df_eu['equity_capital'] = df_eu['equity_capital'].clip(
+        lower=df_eu['total_assets'] * 0.03,
+        upper=df_eu['total_assets'] * 0.15,
+    )
+    df_eu['total_liabilities'] = df_eu['total_assets'] - df_eu['equity_capital']
+    df_eu['leverage_ratio'] = np.where(
+        df_eu['equity_capital'] > 0,
+        df_eu['total_assets'] / df_eu['equity_capital'],
+        0,
+    )
+    avg_lev = df_eu.loc[df_eu['leverage_ratio'] > 0, 'leverage_ratio'].median()
+    print(f"\n  EU Balance Sheet Reconstruction:")
+    print(f"    Total Assets (cre+sov): €{df_eu['total_assets'].sum() / 1e12:.2f}T")
+    print(f"    Equity (RWA×{AVG_CET1_RATIO:.1%}):   €{df_eu['equity_capital'].sum() / 1e12:.2f}T")
+    print(f"    Median leverage:         {avg_lev:.1f}×")
     df_eu['region'] = 'EU'
     numeric_cols = df_eu.select_dtypes(include=[np.number]).columns
     df_eu[numeric_cols] = df_eu[numeric_cols].fillna(0)

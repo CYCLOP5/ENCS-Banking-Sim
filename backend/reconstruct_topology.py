@@ -8,7 +8,7 @@ warnings.filterwarnings('ignore')
 BASE_PATH = Path(__file__).parent / "data"
 OUTPUT_DIR = BASE_PATH / "output"
 EU_INTERBANK_RATIO = 0.15  
-US_INTERBANK_RATIO = 0.40  
+US_INTERBANK_RATIO = 0.10  # Fixed: was 0.40, real-world is <10% for large banks
 DERIV_MULTIPLIER = 1.5
 SUPER_CORE_COUNT = 30  
 CORE_PERCENTILE = 0.95  
@@ -77,7 +77,8 @@ def classify_core_periphery(df: pd.DataFrame) -> pd.DataFrame:
 def build_gravity_matrix(df: pd.DataFrame) -> sparse.csr_matrix:
     """
     Construct adjacency matrix using Gravity Model.
-    Weight w_ij = (A_i * L_j) / Distance
+    Weight w_ij = (Liab_i * Asset_j) / Distance
+    i = debtor (borrower), j = creditor (lender)
     Connection rules:
     - Super Core connects to everyone
     - Core connects to Core + Super Core
@@ -119,15 +120,19 @@ def build_gravity_matrix(df: pd.DataFrame) -> sparse.csr_matrix:
         else:
             targets = np.concatenate([super_core_idx, core_idx])
         targets = targets[targets != i]
+        liab_i = liabs[i]
+        if liab_i <= 0:
+            continue
         for j in targets:
-            liab_j = liabs[j]
-            if liab_j <= 0:
+            asset_j = assets[j]
+            if asset_j <= 0:
                 continue
             if regions[i] == regions[j]:
                 distance = DISTANCE_SAME_REGION
             else:
                 distance = DISTANCE_CROSS_REGION
-            weight = (asset_i * liab_j) / distance
+            # Debtor demand (liab_i) × Creditor capacity (asset_j)
+            weight = (liab_i * asset_j) / distance
             if weight > 0:
                 rows.append(i)
                 cols.append(j)
@@ -145,8 +150,8 @@ def ras_balance(W: sparse.csr_matrix, target_row_sums: np.ndarray,
     """
     Apply RAS/Sinkhorn-Knopp algorithm to balance the matrix.
     Iteratively adjusts W so that:
-    - Row sums ≈ interbank_assets
-    - Col sums ≈ interbank_liabilities
+    - Row sums ≈ interbank_liabilities (outflows / obligations)
+    - Col sums ≈ interbank_assets      (inflows / claims)
     """
     print("\n" + "=" * 60)
     print("STEP 4: RAS (SINKHORN-KNOPP) BALANCING")
@@ -283,8 +288,9 @@ def main():
     df = load_and_impute_exposures()
     df = classify_core_periphery(df)
     W = build_gravity_matrix(df)
-    target_row = df['interbank_assets'].values
-    target_col = df['interbank_liabilities'].values
+    # Row sums = outflows (liabilities), Col sums = inflows (assets)
+    target_row = df['interbank_liabilities'].values
+    target_col = df['interbank_assets'].values
     W_balanced = ras_balance(W, target_row, target_col)
     network_map = export_outputs(W_balanced, df)
     analyze_connectivity(W_balanced, df)

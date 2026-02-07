@@ -18,7 +18,7 @@ DEFAULT_MAX_ITERATIONS = 100
 DEFAULT_CONVERGENCE_THRESHOLD = 1e-5
 DEFAULT_DISTRESS_THRESHOLD = 0.5
 EU_INTERBANK_RATIO = 0.15
-US_INTERBANK_RATIO = 0.40
+US_INTERBANK_RATIO = 0.10  # Fixed: was 0.40, real-world is <10% for large banks
 DERIV_MULTIPLIER = 1.5
 def load_and_align_network():
     """
@@ -422,8 +422,6 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                         total_withdrawn_global += withdrawn
                         W[i, j] = 0.0
 
-            volume_norm = total_withdrawn_global / 1e12
-
             margin_calls_total = 0.0
             if margin_sensitivity > 0.0:
                 price_drop = 1.0 - asset_price
@@ -475,7 +473,12 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             failed = int(np.sum((obligations > 1e-6) & ((payments / np.maximum(obligations, 1e-12)) < 0.999)))
 
             n_def = int(np.sum(equity < 0))
-            equity_ratio = np.where(equity > 0, equity / np.maximum(total_assets - total_liabilities, 1e-12), 1.0)
+            # Compare current equity to pre-shock initial equity for distress
+            equity_ratio = np.where(
+                state['equity'] > 0,
+                equity / np.maximum(state['equity'], 1e-12),
+                1.0
+            )
             n_dis = int(np.sum((equity_ratio < distress_threshold) & (equity >= 0)))
             eq_loss = float(np.sum(np.abs(equity[equity < 0])))
 

@@ -851,7 +851,7 @@ def main():
         )
 
         # ── Regional breakdown ──
-        status_arr = cr['status']
+        status_arr = np.array(cr['status'])  # Must be ndarray for element-wise ==
         regions_arr = df_c['region'].values
         breakdown = []
         for rgn in ['US', 'EU']:

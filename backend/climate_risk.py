@@ -207,7 +207,11 @@ def run_transition_shock(
     )
 
     trigger_idx = int(np.argmax(climate_net_shock))
-    trigger_severity = float(np.clip(shock_fraction[trigger_idx], 0.0, 1.0))
+    # FIX: Climate shock is already applied to ALL banks' external_assets
+    # above.  Setting trigger_severity = 0 avoids double-dipping the
+    # trigger bank.  The clearing / intraday engine will discover defaults
+    # organically from the already-weakened state.
+    trigger_severity = 0.0
 
     trigger_name = (str(df.iloc[trigger_idx]['bank_name'])[:40]
                     if pd.notna(df.iloc[trigger_idx].get('bank_name')) else 'Unknown')
