@@ -359,11 +359,13 @@ def _single_mc_run(args):
     except ValueError:
         return None
 
+    risky_frac = float((labels == 1).mean()) if len(labels) > 0 else 0.0
+
     # Return only the parts that vary per run (node feats + labels).
     # edge_index is identical across runs (same topology); edge_attr is
     # rebuilt from W_noisy per-run but is huge (1.3 M × 3).  Instead we
     # return the *noise multiplier* so the main process can reconstruct.
-    return (node_feats, labels, edge_noise, regime)
+    return (node_feats, labels, edge_noise, regime, risky_frac)
 
 
 def generate_dataset(
@@ -374,6 +376,8 @@ def generate_dataset(
     verbose: bool = True,
     prune_topk: int | None = PRUNE_TOPK_DEFAULT,
     balanced_regimes: bool = True,
+    min_risky_frac: float | None = 0.05,
+    max_risky_frac: float | None = 0.85,
 ) -> list:
     """
     Run the simulation `n_runs` times with random perturbations.
@@ -441,6 +445,7 @@ def generate_dataset(
     label_counts = {0: 0, 1: 0}
     regime_counts = {"calm": 0, "moderate": 0, "stressed": 0}
     failed = 0
+    rejected = 0
     t0 = time.time()
 
     print(f"  Workers: {n_workers}  |  Chunksize: {chunksize}")
@@ -454,7 +459,14 @@ def generate_dataset(
         )
         for i, result in enumerate(results_iter):
             if result is not None:
-                node_feats, labels, edge_noise, regime = result
+                node_feats, labels, edge_noise, regime, risky_frac = result
+
+                if min_risky_frac is not None and risky_frac < min_risky_frac:
+                    rejected += 1
+                    continue
+                if max_risky_frac is not None and risky_frac > max_risky_frac:
+                    rejected += 1
+                    continue
 
                 # Reconstruct edge weights and edge_attr in main process
                 edge_weights = (_SHARED["base_edge_weights"].astype(np.float64) * edge_noise.astype(np.float64))
@@ -497,7 +509,7 @@ def generate_dataset(
                 )
 
     elapsed = time.time() - t0
-    print(f"\n  Generated {len(dataset)} graphs in {elapsed:.1f}s  ({failed} failed)")
+    print(f"\n  Generated {len(dataset)} graphs in {elapsed:.1f}s  ({failed} failed, {rejected} rejected)")
     print(
         f"  Regimes: calm={regime_counts['calm']}, moderate={regime_counts['moderate']}, "
         f"stressed={regime_counts['stressed']}"
@@ -1159,17 +1171,32 @@ def train_model_regression(
     print("\n  Threshold sweep:")
     best_th = 0.25
     best_f1_sweep = 0.0
+    best_bal_th = 0.25
+    best_bal_acc = -1.0
     for th in np.arange(0.10, 0.40, 0.01):
         bt = (val_true_f >= th).astype(np.int64)
         bp = (val_pred_f >= th).astype(np.int64)
         _, _, f1_s, _ = precision_recall_fscore_support(bt, bp, average="binary", zero_division=0)
+        cm_tmp = confusion_matrix(bt, bp)
+        if cm_tmp.shape == (2, 2):
+            tn, fp, fn, tp = cm_tmp.ravel()
+            tpr = tp / max(tp + fn, 1)
+            tnr = tn / max(tn + fp, 1)
+            bal_acc = 0.5 * (tpr + tnr)
+        else:
+            bal_acc = 0.0
         if f1_s > best_f1_sweep:
             best_f1_sweep = f1_s
             best_th = th
-    print(f"  Best threshold: {best_th:.2f} (F1={best_f1_sweep:.3f})")
+        if bal_acc > best_bal_acc:
+            best_bal_acc = bal_acc
+            best_bal_th = th
+    print(f"  Best threshold (F1): {best_th:.2f} (F1={best_f1_sweep:.3f})")
+    print(f"  Best threshold (Balanced Acc): {best_bal_th:.2f} (BalAcc={best_bal_acc:.3f})")
 
-    bin_true_f = (val_true_f >= best_th).astype(np.int64)
-    bin_pred_f = (val_pred_f >= best_th).astype(np.int64)
+    # Use balanced-accuracy threshold for final confusion matrix
+    bin_true_f = (val_true_f >= best_bal_th).astype(np.int64)
+    bin_pred_f = (val_pred_f >= best_bal_th).astype(np.int64)
     final_prec, final_rec, final_f1, _ = precision_recall_fscore_support(
         bin_true_f, bin_pred_f, average="binary", zero_division=0
     )
@@ -1180,7 +1207,7 @@ def train_model_regression(
 
     cm = confusion_matrix(bin_true_f, bin_pred_f)
 
-    print(f"\n  Classification Report (Val, threshold={best_th:.2f}):")
+    print(f"\n  Classification Report (Val, threshold={best_bal_th:.2f}):")
     print(classification_report(
         bin_true_f, bin_pred_f, target_names=["Low Risk", "High Risk"], zero_division=0
     ))
@@ -2085,6 +2112,18 @@ def main():
         action="store_true",
         help="Disable balanced regimes (use random sampling)",
     )
+    parser.add_argument(
+        "--min-risky-frac",
+        type=float,
+        default=0.05,
+        help="Reject runs with risky fraction below this (set to 0 to disable)",
+    )
+    parser.add_argument(
+        "--max-risky-frac",
+        type=float,
+        default=0.85,
+        help="Reject runs with risky fraction above this (set to 1 to disable)",
+    )
     parser.add_argument("--epochs", type=int, default=300, help="Training epochs")
     parser.add_argument(
         "--generate-only", action="store_true", help="Only generate data"
@@ -2213,6 +2252,11 @@ def main():
     if args.no_balanced_regimes:
         args.balanced_regimes = False
 
+    if args.min_risky_frac <= 0:
+        args.min_risky_frac = None
+    if args.max_risky_frac >= 1:
+        args.max_risky_frac = None
+
     global MLFLOW_AVAILABLE
     if args.no_mlflow:
         MLFLOW_AVAILABLE = False
@@ -2228,6 +2272,8 @@ def main():
             verbose=True,
             prune_topk=args.prune_topk,
             balanced_regimes=args.balanced_regimes,
+            min_risky_frac=args.min_risky_frac,
+            max_risky_frac=args.max_risky_frac,
         )
         torch.save(dataset, str(DATASET_PATH))
         print(f"\n  Dataset saved: {DATASET_PATH}")
