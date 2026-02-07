@@ -5,6 +5,7 @@ import Landing from "./pages/Landing";
 // the user navigates to the Simulation page.
 import "./services/topologyCache";
 import Methodology from "./pages/Methodology";
+import Implementation from "./pages/Implementation";
 import Simulation from "./pages/Simulation";
 import BankExplorer from "./pages/BankExplorer";
 
@@ -14,6 +15,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<Landing />} />
         <Route path="/methodology" element={<Methodology />} />
+        <Route path="/implementation" element={<Implementation />} />
         <Route path="/simulation" element={<Simulation />} />
         <Route path="/banks" element={<BankExplorer />} />
       </Route>
