@@ -253,7 +253,7 @@ def _mp_worker_init():
 
 def _single_mc_run(args):
     """Execute one Monte Carlo simulation run (for multiprocessing.Pool)."""
-    run_idx, noise_pct, n_steps, seed_base = args
+    run_idx, noise_pct, n_steps, seed_base, forced_regime = args
 
     W_base = _SHARED["W_base"]
     df = _SHARED["df"]
@@ -268,13 +268,16 @@ def _single_mc_run(args):
     rng = np.random.RandomState(seed=seed_base + run_idx)
 
     # ── Determine regime ──────────────────────────────────────────────
-    r = rng.random()
-    if r < 0.35:
-        regime = "calm"
-    elif r < 0.70:
-        regime = "moderate"
+    if forced_regime is not None:
+        regime = forced_regime
     else:
-        regime = "stressed"
+        r = rng.random()
+        if r < 0.33:
+            regime = "calm"
+        elif r < 0.66:
+            regime = "moderate"
+        else:
+            regime = "stressed"
 
     # ── Perturb exposures ONLY on existing edges (saves huge memory) ─
     edge_noise = (1.0 + rng.uniform(-noise_pct, noise_pct, size=base_edge_weights.shape)).astype(
@@ -289,26 +292,32 @@ def _single_mc_run(args):
 
     # ── Regime-specific parameters ────────────────────────────────────
     if regime == "calm":
-        trigger_idx = int(rng.choice(pool_small if len(pool_small) > 0 else pool_all))
-        severity = float(rng.uniform(0.01, 0.10))
-        sigma = rng.uniform(0.01, 0.03)
-        panic_th = rng.uniform(0.30, 0.50)
-        alpha = rng.uniform(0.0005, 0.002)
-        margin_sens = 0.0
+        trigger_pool = (
+            pool_small if len(pool_small) > 0 else pool_all
+        )
+        severity = float(rng.uniform(0.01, 0.20))
+        sigma = rng.uniform(0.01, 0.05)
+        panic_th = rng.uniform(0.25, 0.50)
+        alpha = rng.uniform(0.0005, 0.004)
+        margin_sens = rng.uniform(0.0, 0.3)
     elif regime == "moderate":
-        trigger_idx = int(rng.choice(pool_mid if len(pool_mid) > 0 else pool_all))
-        severity = float(rng.uniform(0.05, 0.40))
-        sigma = rng.uniform(0.03, 0.06)
-        panic_th = rng.uniform(0.15, 0.30)
-        alpha = rng.uniform(0.001, 0.004)
-        margin_sens = rng.uniform(0.0, 0.5)
+        trigger_pool = (
+            pool_mid if len(pool_mid) > 0 else pool_all
+        )
+        severity = float(rng.uniform(0.05, 0.60))
+        sigma = rng.uniform(0.02, 0.07)
+        panic_th = rng.uniform(0.12, 0.35)
+        alpha = rng.uniform(0.001, 0.006)
+        margin_sens = rng.uniform(0.0, 1.0)
     else:  # stressed
-        trigger_idx = int(rng.choice(pool_top30))
-        severity = float(rng.uniform(0.30, 1.0))
-        sigma = rng.uniform(0.05, 0.10)
-        panic_th = rng.uniform(0.05, 0.15)
-        alpha = rng.uniform(0.004, 0.010)
-        margin_sens = rng.uniform(0.5, 2.0)
+        trigger_pool = pool_top30 if len(pool_top30) > 0 else pool_all
+        severity = float(rng.uniform(0.15, 1.20))
+        sigma = rng.uniform(0.04, 0.10)
+        panic_th = rng.uniform(0.05, 0.20)
+        alpha = rng.uniform(0.004, 0.012)
+        margin_sens = rng.uniform(0.5, 2.5)
+
+    trigger_idx = int(rng.choice(trigger_pool))
 
     # ── Run simulation ────────────────────────────────────────────────
     # The Rust engine expects a full dense matrix for state variables.
@@ -359,11 +368,12 @@ def _single_mc_run(args):
 
 def generate_dataset(
     n_runs: int = 500,
-    noise_pct: float = 0.10,
-    n_steps: int = 5,
+    noise_pct: float = 0.15,
+    n_steps: int = 8,
     n_workers: int | None = None,
     verbose: bool = True,
     prune_topk: int | None = PRUNE_TOPK_DEFAULT,
+    balanced_regimes: bool = True,
 ) -> list:
     """
     Run the simulation `n_runs` times with random perturbations.
@@ -411,7 +421,20 @@ def generate_dataset(
         n_workers = min(mp.cpu_count(), 12)
     n_workers = max(1, n_workers)
 
-    args_list = [(i, noise_pct, n_steps, 42) for i in range(n_runs)]
+    rng = np.random.RandomState(42)
+
+    if balanced_regimes:
+        regimes = ["calm", "moderate", "stressed"]
+        per = n_runs // 3
+        remainder = n_runs - (per * 3)
+        schedule = [r for r in regimes for _ in range(per)]
+        if remainder > 0:
+            schedule.extend(rng.choice(regimes, size=remainder, replace=True))
+        rng.shuffle(schedule)
+    else:
+        schedule = [None] * n_runs
+
+    args_list = [(i, noise_pct, n_steps, 42, schedule[i]) for i in range(n_runs)]
     chunksize = max(1, n_runs // (n_workers * 8))
 
     dataset: list = []
@@ -838,20 +861,69 @@ def train_model_regression(
     print(f"  Nodes: {N}  |  Edges: {agg_data.edge_index.shape[1]}")
     print(f"  Target stats — mean: {y.mean():.4f}  std: {y.std():.4f}")
 
-    # ── Node-level train/val split ────────────────────────────────────
+    # ── Balanced node-level train/val split ───────────────────────────
     rng = np.random.RandomState(42)
-    perm = rng.permutation(N)
-    n_val = max(1, int(N * val_frac))
+    y_np = y.cpu().numpy()
+
+    # Risk bins for balance (same as weighting tiers)
+    low_idx = np.where(y_np < 0.15)[0]
+    mid_idx = np.where((y_np >= 0.15) & (y_np < 0.25))[0]
+    high_idx = np.where(y_np >= 0.25)[0]
+
+    for arr in (low_idx, mid_idx, high_idx):
+        rng.shuffle(arr)
+
+    n_val = max(3, int(N * val_frac))
+    target_val_per_bin = max(1, int(n_val / 3))
+
+    val_idx_list = []
+    for b in (low_idx, mid_idx, high_idx):
+        take = min(len(b), target_val_per_bin)
+        if take > 0:
+            val_idx_list.append(b[:take])
+
+    val_idx = np.concatenate(val_idx_list) if len(val_idx_list) > 0 else np.array([], dtype=np.int64)
+
+    # Fill remaining val slots from leftover nodes
+    if len(val_idx) < n_val:
+        remaining = np.setdiff1d(np.arange(N), val_idx, assume_unique=False)
+        extra = rng.choice(remaining, size=(n_val - len(val_idx)), replace=False)
+        val_idx = np.concatenate([val_idx, extra])
+
     val_mask = torch.zeros(N, dtype=torch.bool)
-    val_mask[perm[:n_val]] = True
+    val_mask[val_idx] = True
     train_mask = ~val_mask
 
-    # Store masks on the Data object for NeighborLoader
+    # Balanced training indices (oversample minority bins)
+    train_bins = {
+        "low": np.setdiff1d(low_idx, val_idx, assume_unique=False),
+        "mid": np.setdiff1d(mid_idx, val_idx, assume_unique=False),
+        "high": np.setdiff1d(high_idx, val_idx, assume_unique=False),
+    }
+    max_bin = max(len(v) for v in train_bins.values() if len(v) > 0)
+    train_idx_balanced = []
+    for k, b in train_bins.items():
+        if len(b) == 0:
+            continue
+        sampled = rng.choice(b, size=max_bin, replace=(len(b) < max_bin))
+        train_idx_balanced.append(sampled)
+    train_idx_balanced = np.concatenate(train_idx_balanced) if len(train_idx_balanced) > 0 else np.array([], dtype=np.int64)
+    rng.shuffle(train_idx_balanced)
+
+    # Store masks and indices on the Data object for NeighborLoader
     agg_data.train_mask = train_mask
     agg_data.val_mask = val_mask
+    agg_data.train_idx_balanced = torch.from_numpy(train_idx_balanced).long()
+    agg_data.val_idx = torch.from_numpy(val_idx).long()
 
     print(f"  Train nodes: {train_mask.sum().item()}  |  Val nodes: {val_mask.sum().item()}")
     print(f"  Train target mean: {y[train_mask].mean():.4f}  |  Val target mean: {y[val_mask].mean():.4f}")
+    print(
+        "  Bin sizes (low/mid/high): "
+        f"{len(low_idx)}/{len(mid_idx)}/{len(high_idx)} | "
+        f"Val per bin: ~{target_val_per_bin} | "
+        f"Balanced train size: {len(train_idx_balanced)}"
+    )
 
     # ── Degree histogram (single graph) ───────────────────────────────
     from torch_geometric.utils import degree as _degree
@@ -893,8 +965,8 @@ def train_model_regression(
     # ── NeighborLoader for mini-batch training ────────────────────────
     # Sample neighbors per layer: fewer in deeper layers to control memory
     num_neighbors = [20, 15, 10][:num_layers]
-    train_idx = train_mask.nonzero(as_tuple=False).view(-1)
-    val_idx = val_mask.nonzero(as_tuple=False).view(-1)
+    train_idx = agg_data.train_idx_balanced if hasattr(agg_data, "train_idx_balanced") else train_mask.nonzero(as_tuple=False).view(-1)
+    val_idx = agg_data.val_idx if hasattr(agg_data, "val_idx") else val_mask.nonzero(as_tuple=False).view(-1)
 
     train_loader = NeighborLoader(
         agg_data,
@@ -1116,6 +1188,46 @@ def train_model_regression(
     print(f"\n  Final — MSE: {final_mse:.6f} | MAE: {final_mae:.4f} | "
           f"r: {final_r:.3f} | Prec: {final_prec:.3f} | Rec: {final_rec:.3f} | "
           f"F1: {final_f1:.3f} | AUC: {final_auc:.3f}")
+
+    # ── Balanced evaluation (equal bins) ─────────────────────────────
+    rng_eval = np.random.RandomState(123)
+    b_low = np.where(val_true_f < 0.15)[0]
+    b_mid = np.where((val_true_f >= 0.15) & (val_true_f < 0.25))[0]
+    b_high = np.where(val_true_f >= 0.25)[0]
+    min_bin = min(len(b_low), len(b_mid), len(b_high))
+    if min_bin > 0:
+        sel = np.concatenate([
+            rng_eval.choice(b_low, size=min_bin, replace=False),
+            rng_eval.choice(b_mid, size=min_bin, replace=False),
+            rng_eval.choice(b_high, size=min_bin, replace=False),
+        ])
+        rng_eval.shuffle(sel)
+
+        bal_true = val_true_f[sel]
+        bal_pred = val_pred_f[sel]
+
+        bal_bin_true = (bal_true >= best_th).astype(np.int64)
+        bal_bin_pred = (bal_pred >= best_th).astype(np.int64)
+        bal_prec, bal_rec, bal_f1, _ = precision_recall_fscore_support(
+            bal_bin_true, bal_bin_pred, average="binary", zero_division=0
+        )
+        try:
+            bal_auc = roc_auc_score(bal_bin_true, bal_pred)
+        except ValueError:
+            bal_auc = 0.0
+        bal_cm = confusion_matrix(bal_bin_true, bal_bin_pred)
+
+        print("\n  Balanced Val Evaluation (equal low/mid/high bins):")
+        print(classification_report(
+            bal_bin_true, bal_bin_pred, target_names=["Low Risk", "High Risk"], zero_division=0
+        ))
+        print(f"  Balanced Confusion Matrix:\n{bal_cm}")
+        print(
+            f"  Balanced — Prec: {bal_prec:.3f} | Rec: {bal_rec:.3f} | "
+            f"F1: {bal_f1:.3f} | AUC: {bal_auc:.3f}"
+        )
+    else:
+        print("\n  Balanced Val Evaluation skipped (one or more bins empty).")
 
     # ── Save artifacts ────────────────────────────────────────────────
     history_path = str(BASE_DIR / "training_history.json")
@@ -1950,6 +2062,29 @@ def main():
     parser.add_argument(
         "--runs", type=int, default=500, help="Number of MC runs for data gen"
     )
+    parser.add_argument(
+        "--noise-pct",
+        type=float,
+        default=0.15,
+        help="Edge weight noise percentage (e.g., 0.15 = ±15%)",
+    )
+    parser.add_argument(
+        "--n-steps",
+        type=int,
+        default=8,
+        help="Intraday simulation steps per run",
+    )
+    parser.add_argument(
+        "--balanced-regimes",
+        action="store_true",
+        default=True,
+        help="Balance calm/moderate/stressed regimes (default: True)",
+    )
+    parser.add_argument(
+        "--no-balanced-regimes",
+        action="store_true",
+        help="Disable balanced regimes (use random sampling)",
+    )
     parser.add_argument("--epochs", type=int, default=300, help="Training epochs")
     parser.add_argument(
         "--generate-only", action="store_true", help="Only generate data"
@@ -2075,6 +2210,8 @@ def main():
 
     if args.no_aggregate:
         args.aggregate = False
+    if args.no_balanced_regimes:
+        args.balanced_regimes = False
 
     global MLFLOW_AVAILABLE
     if args.no_mlflow:
@@ -2085,9 +2222,12 @@ def main():
     if not args.train_only:
         dataset = generate_dataset(
             n_runs=args.runs,
+            noise_pct=args.noise_pct,
+            n_steps=args.n_steps,
             n_workers=args.workers,
             verbose=True,
             prune_topk=args.prune_topk,
+            balanced_regimes=args.balanced_regimes,
         )
         torch.save(dataset, str(DATASET_PATH))
         print(f"\n  Dataset saved: {DATASET_PATH}")
