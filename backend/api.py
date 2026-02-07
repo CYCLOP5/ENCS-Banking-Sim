@@ -118,15 +118,30 @@ def _clean_results(d: dict) -> dict:
     out = {}
     for k, v in d.items():
         if isinstance(v, np.ndarray):
-            out[k] = v.tolist()
+            v_safe = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+            out[k] = v_safe.tolist()
         elif isinstance(v, dict):
             out[k] = _clean_results(v)
         elif isinstance(v, (np.integer,)):
             out[k] = int(v)
         elif isinstance(v, (np.floating,)):
-            out[k] = float(v)
-        elif isinstance(v, list) and len(v) > 0 and isinstance(v[0], np.ndarray):
-            out[k] = [x.tolist() for x in v]
+            out[k] = float(v) if np.isfinite(v) else 0.0
+        elif isinstance(v, list):
+            cleaned_list = []
+            for item in v:
+                if isinstance(item, np.ndarray):
+                    cleaned_list.append(
+                        np.nan_to_num(item, nan=0.0, posinf=0.0, neginf=0.0).tolist()
+                    )
+                elif isinstance(item, (np.floating, float)):
+                    cleaned_list.append(float(item) if np.isfinite(item) else 0.0)
+                elif isinstance(item, (np.integer, int)):
+                    cleaned_list.append(int(item))
+                elif isinstance(item, dict):
+                    cleaned_list.append(_clean_results(item))
+                else:
+                    cleaned_list.append(item)
+            out[k] = cleaned_list
         elif k == "agents":
             # Skip non-serialisable agent objects
             continue
@@ -255,10 +270,10 @@ async def run_simulation(req: SimulationRequest):
                 trigger_idx=req.trigger_idx,
                 loss_severity=req.severity,
                 n_steps=req.n_steps,
-                sigma=req.sigma,
-                panic_rate=req.panic_rate,
-                fire_sale_alpha=req.fire_sale_alpha,
-                margin_multiplier=req.margin_multiplier,
+                uncertainty_sigma=req.sigma,
+                panic_threshold=req.panic_rate,
+                alpha=req.fire_sale_alpha,
+                margin_sensitivity=req.margin_multiplier,
                 max_iterations=req.max_iter,
                 convergence_threshold=req.tolerance,
                 distress_threshold=req.distress_threshold,

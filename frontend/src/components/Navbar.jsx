@@ -5,17 +5,21 @@ import {
   Activity,
   Network,
   BookOpen,
+  Layers,
   Database,
   Menu,
   X,
+  GraduationCap,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 
 const links = [
   { to: "/", label: "Home", icon: Activity },
   { to: "/methodology", label: "Methodology", icon: BookOpen },
+  { to: "/implementation", label: "Architecture", icon: Layers },
   { to: "/simulation", label: "Simulation", icon: Network },
   { to: "/banks", label: "Banks", icon: Database },
+  { to: "/terminology", label: "Glossary", icon: GraduationCap },
 ];
 
 export default function Navbar() {

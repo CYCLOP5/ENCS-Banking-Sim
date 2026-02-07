@@ -131,7 +131,7 @@ export default function Methodology() {
             <div className="grid grid-cols-3 gap-3 mt-4">
               {[
                 { status: "Safe", color: "text-stability-green", desc: "p* = p̄" },
-                { status: "Distressed", color: "text-amber-warn", desc: "Equity < 5%" },
+                { status: "Distressed", color: "text-amber-warn", desc: "≥50% equity lost" },
                 { status: "Default", color: "text-crisis-red", desc: "p* < p̄" },
               ].map(({ status, color, desc }) => (
                 <div key={status} className="glass rounded-lg p-3 text-center">
@@ -150,6 +150,25 @@ export default function Methodology() {
               amplify the cascade across discrete time-steps, implemented in Rust
               for performance.
             </p>
+
+            <div className="mt-6 glass rounded-lg p-4 border border-stability-green/10">
+              <h4 className="text-sm font-bold text-stability-green font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
+                Liquidity Spirals
+              </h4>
+              <p className="text-text-secondary text-sm leading-relaxed mb-3">
+                The Rust engine explicitly calculates <b className="text-white">variation margin calls</b>{" "}
+                when asset prices drop. For each bank <Tex>{"i"}</Tex> with derivatives notional <Tex>{"D_i"}</Tex>:
+              </p>
+              <TexBlock>
+                {"M_i = D_i \\cdot (1 - P_t) \\cdot m_{\\text{sens}}"}
+              </TexBlock>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                If external assets are insufficient to meet the margin call, the bank
+                is forced to <b className="text-crisis-red">liquidate assets</b>, driving
+                prices further down and triggering additional margin calls across the
+                network — a self-reinforcing liquidity spiral.
+              </p>
+            </div>
           </GlassPanel>
         </FadeIn>
 
@@ -164,9 +183,10 @@ export default function Methodology() {
             />
 
             <p className="text-text-secondary leading-relaxed mb-4">
-              A <b className="text-white">2-layer GCN</b> (Graph Convolutional Network)
-              learns to predict bank default risk from the interbank topology. Each
-              node has a <b className="text-white">7-dimensional feature vector</b>:
+              An <b className="text-white">edge-aware PNA</b> (Principal Neighbourhood Aggregation)
+              model learns to predict bank risk frequency from the interbank topology.
+              It uses multi-aggregators and degree scalers for hub-heavy networks. Each
+              node has a <b className="text-white">13-dimensional feature vector</b> (7 base + 6 topology):
             </p>
 
             <div className="glass rounded-lg p-4 mb-4 font-[family-name:var(--font-mono)] text-sm">
@@ -196,21 +216,39 @@ export default function Methodology() {
             </div>
 
             <p className="text-text-secondary leading-relaxed mb-4">
-              The message-passing rule at layer <Tex>{"l"}</Tex>:
+              The message-passing uses multiple aggregators and degree scalers:
             </p>
 
             <TexBlock>
-              {
-                "\\mathbf{h}_i^{(l+1)} = \\sigma\\!\\left(\\sum_{j \\in \\mathcal{N}(i)} \\frac{1}{\\sqrt{d_i d_j}} \\, \\mathbf{W}^{(l)} \\mathbf{h}_j^{(l)}\\right)"
-              }
+              {"\\mathbf{h}_i^{(l+1)} = \\sigma\\!\\Big( \\Vert_{a \\in \\mathcal{A}} \\text{AGG}_a(\\mathcal{N}(i)) \\Big)"}
             </TexBlock>
 
             <p className="text-text-secondary leading-relaxed text-sm">
-              Trained on <b className="text-white">500 Monte Carlo simulation runs</b> across
-              three regimes (Calm / Moderate / Stressed). Binary cross-entropy loss
-              optimises for distinguishing Safe vs. Risky (Default + Distressed)
-              nodes.
+              Trained on Monte Carlo simulations across three regimes, then
+              <b className="text-white"> aggregated into a single risk-frequency graph</b>.
+              The objective is <b className="text-white">weighted MSE regression</b> to predict
+              each bank’s risk frequency in [0,1].
             </p>
+
+            <div className="mt-6 glass rounded-lg p-4 border border-data-blue/10">
+              <h4 className="text-sm font-bold text-data-blue font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
+                Training Details
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-text-secondary">
+                <div className="glass rounded p-2 text-center">
+                  <span className="text-data-blue font-[family-name:var(--font-mono)]">Loss</span>
+                  <p className="text-[11px] mt-1">Weighted MSE (5× high-risk, 2× mid-risk)</p>
+                </div>
+                <div className="glass rounded p-2 text-center">
+                  <span className="text-data-blue font-[family-name:var(--font-mono)]">Scheduler</span>
+                  <p className="text-[11px] mt-1">AdamW + CosineAnnealingWarmRestarts</p>
+                </div>
+                <div className="glass rounded p-2 text-center">
+                  <span className="text-data-blue font-[family-name:var(--font-mono)]">Regularisation</span>
+                  <p className="text-[11px] mt-1">Dropout <Tex>{"p = 0.2"}</Tex> with residual PNA blocks</p>
+                </div>
+              </div>
+            </div>
           </GlassPanel>
         </FadeIn>
 
@@ -231,6 +269,26 @@ export default function Methodology() {
             </p>
 
             <TexBlock>{"U_i = \\mathbb{E}[\\text{Return}] - \\lambda_i \\cdot \\text{Risk}"}</TexBlock>
+
+            <div className="glass rounded-lg p-4 mb-4 text-sm">
+              <p className="text-text-secondary mb-2">Concretely, the engine evaluates two payoffs per agent per step:</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="glass rounded p-3">
+                  <span className="text-stability-green font-[family-name:var(--font-mono)] text-xs">Roll Over</span>
+                  <TexBlock>{"U_{\\text{stay}} = (1-p)(1+r) + pR - \\lambda\\sigma"}</TexBlock>
+                </div>
+                <div className="glass rounded p-3">
+                  <span className="text-crisis-red font-[family-name:var(--font-mono)] text-xs">Withdraw</span>
+                  <TexBlock>{"U_{\\text{run}} = 1 + m"}</TexBlock>
+                </div>
+              </div>
+              <p className="text-text-muted text-xs mt-2">
+                Where <Tex>{"r"}</Tex> = interest rate, <Tex>{"R"}</Tex> = recovery rate,{" "}
+                and <Tex>{"m"}</Tex> = <b className="text-white">margin pressure</b> — a liquidity premium that
+                rises with market-wide volatility and accumulated fire-sale damage,
+                coupling the clearing layer directly into strategic decisions.
+              </p>
+            </div>
 
             <p className="text-text-secondary leading-relaxed mb-4">
               Each agent receives a <b className="text-white">private signal</b>{" "}
@@ -275,6 +333,26 @@ export default function Methodology() {
                   coordination succeeds → capital saved.
                 </p>
               </div>
+            </div>
+
+            <div className="mt-6 glass rounded-lg p-4 border border-neon-purple/10">
+              <h4 className="text-sm font-bold text-neon-purple font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
+                Self-Fulfilling Feedback Loop
+              </h4>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                Aggregate withdrawals trigger <b className="text-white">fire-sale losses</b>{" "}
+                that degrade the effective solvency signal seen by all agents at the
+                next time-step:
+              </p>
+              <TexBlock>
+                {"\\theta_{\\text{eff}}^{(t)} = \\theta \\cdot \\left(1 - 0.5 \\cdot \\frac{\\text{Cum. Loss}}{\\text{Remaining Exposure}}\\right)"}
+              </TexBlock>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                This creates a <b className="text-crisis-red">self-reinforcing death spiral</b>:
+                runs erode asset value → signals worsen → more agents withdraw → further
+                losses. The transparent regime breaks this cycle by anchoring beliefs
+                before the loop can take hold.
+              </p>
             </div>
           </GlassPanel>
         </FadeIn>
