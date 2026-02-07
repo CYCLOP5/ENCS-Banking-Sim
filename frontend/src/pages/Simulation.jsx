@@ -226,15 +226,23 @@ export default function Simulation() {
       .catch(() => {});
   }, []);
 
-  // ── Resize observer ──
+  // ── Resize observer (debounced to avoid re-renders on every frame) ──
   useEffect(() => {
     if (!containerRef.current) return;
+    let rafId = null;
     const ro = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      setDims({ w: width, h: height });
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const { width, height } = entries[0].contentRect;
+        setDims((prev) =>
+          prev.w === Math.round(width) && prev.h === Math.round(height)
+            ? prev
+            : { w: Math.round(width), h: Math.round(height) }
+        );
+      });
     });
     ro.observe(containerRef.current);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); if (rafId) cancelAnimationFrame(rafId); };
   }, []);
 
   // ── Build status map from results ──
