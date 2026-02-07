@@ -148,11 +148,12 @@ function MechanicalDetail({ results }) {
     { name: "Safe", value: status.filter((s) => s === "Safe").length, fill: "#05d5fa" },
     { name: "Distressed", value: status.filter((s) => s === "Distressed").length, fill: "#ffaa00" },
     { name: "Default", value: status.filter((s) => s === "Default").length, fill: "#ff2a6d" },
-  ].filter((d) => d.value > 0);
+  ].filter((d) => d.name === "Safe" && d.value === 1 ? false : d.value > 0);
+
+  const totalRelevant = statusPie.reduce((acc, curr) => acc + curr.value, 0);
 
   return (
     <>
-      {/* ── Summary Stats ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
         <StatCard label="Defaults" value={results.n_defaults ?? 0} icon={AlertTriangle} color="text-crisis-red" />
         <StatCard label="Distressed" value={results.n_distressed ?? 0} icon={Flame} color="text-amber-warn" />
@@ -198,7 +199,7 @@ function MechanicalDetail({ results }) {
                   {s.name}
                 </div>
                 <div className="text-xs text-text-muted font-[family-name:var(--font-mono)]">
-                  {((s.value / status.length) * 100).toFixed(1)}%
+                  {((s.value / totalRelevant) * 100).toFixed(1)}%
                 </div>
               </div>
             ))}
@@ -208,7 +209,7 @@ function MechanicalDetail({ results }) {
           <div className="space-y-2">
             <div className="flex h-4 w-full rounded-full overflow-hidden bg-white/5">
               {statusPie.map((s) => {
-                const pct = (s.value / status.length) * 100;
+                const pct = (s.value / totalRelevant) * 100;
                 if (pct === 0) return null;
                 return (
                   <div
@@ -228,7 +229,7 @@ function MechanicalDetail({ results }) {
                 </div>
               ))}
               <span className="text-text-secondary">
-                Total: {status.length.toLocaleString()}
+                Total: {totalRelevant.toLocaleString()}
               </span>
             </div>
           </div>

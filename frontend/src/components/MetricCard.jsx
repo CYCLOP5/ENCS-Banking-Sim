@@ -12,8 +12,12 @@ export default function MetricCard({
   color = "text-stability-green",
   className,
 }) {
+  const nValue = Number(value);
+  const isCurrency =
+    typeof value === "number" || (!Number.isNaN(nValue) && value !== "");
+
   const displayVal =
-    typeof value === "number" && !suffix && !prefix
+    isCurrency && label !== "Defaults" && label !== "Distressed" && !suffix && !prefix
       ? formatUSD(value)
       : `${prefix ?? ""}${value}${suffix ?? ""}`;
 

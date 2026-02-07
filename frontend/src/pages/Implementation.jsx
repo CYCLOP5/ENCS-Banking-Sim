@@ -453,7 +453,7 @@ if RUST_AVAILABLE:
             </span>
          </div>
          <p className="text-text-secondary max-w-2xl mx-auto">
-            Built for the 2026 FinTech Datathon. <br/>
+            Built for the 2026 Datathon. <br/>
             Stack: React (Vite) • Python (FastAPI) • Rust (PyO3) • PyTorch (GNN)
          </p>
       </div>

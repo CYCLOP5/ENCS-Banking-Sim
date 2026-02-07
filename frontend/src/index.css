@@ -36,17 +36,26 @@ body {
 
 /* ── Glass Panel ──────────────────────────────────────────────── */
 .glass {
-  background: rgba(13, 13, 20, 0.6);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(13, 13, 20, 0.85);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .glass-bright {
-  background: rgba(13, 13, 20, 0.8);
+  background: rgba(13, 13, 20, 0.95);
   backdrop-filter: blur(32px);
   -webkit-backdrop-filter: blur(32px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ── Typography Adjustments for Contrast ──────────────────────── */
+.text-text-secondary {
+  color: #a0a0b0; /* Lightened from #888899 */
+}
+
+.text-text-muted {
+  color: #707080; /* Lightened from #555566 */
 }
 
 /* ── Neon glow utilities ──────────────────────────────────────── */

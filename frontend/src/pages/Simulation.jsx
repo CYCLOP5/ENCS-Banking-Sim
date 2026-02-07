@@ -16,6 +16,7 @@ import {
   Info,
   RotateCcw,
   Search,
+  Square,
 } from "lucide-react";
 import GlassPanel from "../components/GlassPanel";
 import MetricCard from "../components/MetricCard";
@@ -231,6 +232,18 @@ export default function Simulation() {
       statusMap[i] = s;
     });
   }
+
+  // ── Stop animation ──
+  const stopContagion = useCallback(() => {
+    if (contagionTimerRef.current) {
+      clearInterval(contagionTimerRef.current);
+      contagionTimerRef.current = null;
+    }
+    setContagionActive(false);
+    setContagionSet(null);
+    setContagionLinks(null);
+    if (graphRef.current) graphRef.current.zoomToFit(1000);
+  }, []);
 
   // ── BFS contagion animation ──
   const startContagion = useCallback(() => {
@@ -1139,26 +1152,26 @@ export default function Simulation() {
           </motion.button>
         )}
 
-        {/* Replay Contagion Button */}
+        {/* Replay/Stop Contagion Button */}
         {results && results.status && (
           <motion.button
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            onClick={startContagion}
-            disabled={contagionActive}
+            onClick={contagionActive ? stopContagion : startContagion}
             className={cn(
               "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
               contagionActive
-                ? "border-crisis-red/40 shadow-lg shadow-crisis-red/10"
+                ? "border-crisis-red/40 shadow-lg shadow-crisis-red/10 bg-crisis-red/10"
                 : "border-border-bright hover:border-crisis-red/40 hover:shadow-lg hover:shadow-crisis-red/10"
             )}
           >
-            <RotateCcw className={cn(
-              "h-4 w-4 transition-transform",
-              contagionActive ? "text-crisis-red animate-spin" : "text-crisis-red group-hover:scale-110"
-            )} />
+            {contagionActive ? (
+              <Square className="h-4 w-4 text-crisis-red fill-crisis-red" />
+            ) : (
+              <RotateCcw className="h-4 w-4 text-crisis-red group-hover:scale-110 transition-transform" />
+            )}
             <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-crisis-red transition-colors">
-              {contagionActive ? "PLAYING..." : "REPLAY CONTAGION"}
+              {contagionActive ? "STOP REPLAY" : "REPLAY CONTAGION"}
             </span>
           </motion.button>
         )}
