@@ -6,6 +6,8 @@ from plotly.subplots import make_subplots
 import networkx as nx
 import simulation_engine as sim
 from pathlib import Path
+from strategic_model import run_game_simulation
+from climate_risk import assign_climate_exposure, run_transition_shock
 
 try:
     import torch
@@ -593,7 +595,366 @@ def main():
             else:
                 st.info("Run a simulation to compare AI vs actual results")
 
+    # ==================================================================
+    #  🌍  CLIMATE STRESS TEST  —  Green Swan Transition Risk
+    # ==================================================================
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("## 🌍 Climate Stress Test")
+    st.sidebar.caption("Green Swan scenario — sudden carbon tax strands brown assets")
+
+    climate_enabled = st.sidebar.checkbox(
+        "Enable Green Swan Scenario", value=False, key="climate_on",
+        help="Apply a carbon-tax transition shock based on portfolio composition"
+    )
+
+    if climate_enabled:
+        climate_tax = st.sidebar.slider(
+            "Carbon Tax Severity", min_value=0, max_value=100, value=50,
+            format="%d%%", key="climate_tax",
+            help="Percentage of brown (fossil-fuel) assets destroyed"
+        ) / 100.0
+        climate_subsidy = st.sidebar.slider(
+            "Green Subsidy", min_value=0, max_value=50, value=10,
+            format="%d%%", key="climate_sub",
+            help="Percentage gain on green (renewables) assets"
+        ) / 100.0
+        climate_intraday = st.sidebar.checkbox(
+            "Use Intraday Engine", value=True, key="climate_intra",
+            help="Propagate via intraday fire-sale engine (unchecked = Eisenberg-Noe)"
+        )
+
+        run_climate_btn = st.sidebar.button(
+            "🌍 RUN CLIMATE SHOCK", use_container_width=True, key="run_climate"
+        )
+
+        if run_climate_btn:
+            with st.spinner("Running Green Swan scenario…"):
+                df_climate = assign_climate_exposure(df.copy())
+                climate_state = sim.compute_state_variables(W_dense, df_climate)
+                climate_results = run_transition_shock(
+                    climate_state, df_climate,
+                    carbon_tax_severity=climate_tax,
+                    green_subsidy=climate_subsidy,
+                    use_intraday=climate_intraday,
+                    n_steps=n_steps,
+                    uncertainty_sigma=intra_sigma,
+                    panic_threshold=intra_panic,
+                    alpha=intra_alpha,
+                    margin_sensitivity=intra_margin,
+                    max_iterations=int(max_iter),
+                    convergence_threshold=tolerance,
+                    distress_threshold=distress_thresh,
+                )
+                st.session_state.climate_results = climate_results
+                st.session_state.df_climate = df_climate
+            st.sidebar.success("Climate shock complete — scroll down for results ↓")
+
+    # ==================================================================
+    #  ♟️  STRATEGIC SIMULATION  —  Morris & Shin (1998) Global Games
+    # ==================================================================
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("## ♟️ Strategic Simulation")
+    st.sidebar.caption("Morris & Shin (1998) Global Games — coordination failure model")
+
+    with st.sidebar.expander("Game Parameters", expanded=False):
+        game_n_banks = st.number_input("Number of agents", value=20, min_value=5, max_value=100, key="game_n_banks")
+        game_n_steps = st.number_input("Time steps", value=5, min_value=2, max_value=20, key="game_n_steps")
+        game_solvency = st.slider("True solvency (θ)", -0.05, 0.30, 0.20, 0.01, key="game_solv")
+        game_rate = st.slider("Interest rate (r)", 0.01, 0.20, 0.10, 0.01, key="game_rate")
+        game_recovery = st.slider("Recovery rate (R)", 0.10, 0.80, 0.40, 0.05, key="game_rec")
+        game_lambda = st.slider("Risk aversion (λ mean)", 0.1, 3.0, 1.0, 0.1, key="game_lam")
+        game_noise = st.slider("Private noise (σ)", 0.01, 0.30, 0.08, 0.01, key="game_noise")
+        game_haircut = st.slider("Fire-sale haircut", 0.05, 0.50, 0.20, 0.05, key="game_hc")
+        game_margin = st.slider("Margin volatility", 0.0, 1.0, 0.3, 0.1, key="game_mv")
+        game_exposure = st.number_input("Exposure / bank ($B)", value=1.0, min_value=0.1, max_value=50.0, step=0.5, key="game_exp")
+
+    run_game_btn = st.sidebar.button("♟️ RUN GAME A/B TEST", use_container_width=True)
+
+    if run_game_btn:
+        with st.spinner("Running Global Games A/B test…"):
+            common = dict(
+                n_banks=int(game_n_banks),
+                n_steps=int(game_n_steps),
+                true_solvency=game_solvency,
+                interest_rate=game_rate,
+                recovery_rate=game_recovery,
+                risk_aversion_mean=game_lambda,
+                private_noise_std=game_noise,
+                initial_exposure_per_bank=game_exposure * 1e9,
+                fire_sale_haircut=game_haircut,
+                margin_volatility=game_margin,
+                seed=42,
+            )
+            res_opaque = run_game_simulation(info_regime="OPAQUE", **common)
+            res_transparent = run_game_simulation(info_regime="TRANSPARENT", **common)
+            st.session_state.game_opaque = res_opaque
+            st.session_state.game_transparent = res_transparent
+        st.sidebar.success("Game A/B test complete — scroll down for results ↓")
+
+    if st.session_state.get('game_opaque') and st.session_state.get('game_transparent'):
+        res_a = st.session_state.game_opaque
+        res_b = st.session_state.game_transparent
+        tl_a = res_a['timeline']
+        tl_b = res_b['timeline']
+        loss_a = res_a['total_fire_sale_loss']
+        loss_b = res_b['total_fire_sale_loss']
+        capital_saved = loss_a - loss_b
+
+        st.markdown("---")
+        st.markdown("### ♟️ Strategic Simulation — Global Games A/B Test")
+        st.markdown(
+            "_Morris & Shin (1998): banks fail from **coordination failure** "
+            "(panics), not just insolvency.  "
+            "The AI transparency signal anchors expectations and prevents self-fulfilling runs._"
+        )
+
+        gcol1, gcol2, gcol3 = st.columns(3)
+        with gcol1:
+            st.metric("🔴 Loss — Opaque (Fog of War)", f"${loss_a / 1e9:,.2f}B")
+        with gcol2:
+            st.metric("🟢 Loss — Transparent (AI)", f"${loss_b / 1e9:,.2f}B")
+        with gcol3:
+            st.markdown(
+                f"<div style='text-align:center; padding:12px; "
+                f"border:2px solid #00ff88; border-radius:10px;'>"
+                f"<span style='font-size:0.9rem;color:#888;'>Capital Saved by AI</span><br/>"
+                f"<span style='font-size:2.5rem;font-weight:bold;color:#00ff88;'>"
+                f"${capital_saved / 1e9:,.2f}B</span></div>",
+                unsafe_allow_html=True,
+            )
+
+        fig_game = go.Figure()
+        fig_game.add_trace(go.Scatter(
+            x=tl_a['steps'],
+            y=[v / 1e9 for v in tl_a['cumulative_fire_sale_loss']],
+            mode='lines+markers',
+            name='Opaque (Fog of War)',
+            line=dict(color='#ff4444', width=3),
+            fill='tozeroy', fillcolor='rgba(255,68,68,0.12)',
+        ))
+        fig_game.add_trace(go.Scatter(
+            x=tl_b['steps'],
+            y=[v / 1e9 for v in tl_b['cumulative_fire_sale_loss']],
+            mode='lines+markers',
+            name='Transparent (AI Signal)',
+            line=dict(color='#00ff88', width=3),
+            fill='tozeroy', fillcolor='rgba(0,255,136,0.12)',
+        ))
+        fig_game.update_layout(
+            title='Cumulative Fire-Sale Losses Over Time',
+            xaxis_title='Time Step', yaxis_title='Cumulative Loss ($B)',
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            height=370, margin=dict(l=50, r=20, t=50, b=40),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        )
+        st.plotly_chart(fig_game, use_container_width=True)
+
+        gc1, gc2 = st.columns(2)
+        with gc1:
+            fig_belief = go.Figure()
+            fig_belief.add_trace(go.Scatter(
+                x=tl_a['steps'], y=tl_a['avg_belief'],
+                mode='lines+markers', name='Opaque',
+                line=dict(color='#ff4444', width=2),
+            ))
+            fig_belief.add_trace(go.Scatter(
+                x=tl_b['steps'], y=tl_b['avg_belief'],
+                mode='lines+markers', name='Transparent',
+                line=dict(color='#00ff88', width=2),
+            ))
+            fig_belief.update_layout(
+                title='Average P(Default) Belief',
+                xaxis_title='Step', yaxis_title='P(default)',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                height=280, margin=dict(l=40, r=10, t=40, b=30),
+                yaxis=dict(range=[0, 1]),
+            )
+            st.plotly_chart(fig_belief, use_container_width=True)
+
+        with gc2:
+            fig_run = go.Figure()
+            fig_run.add_trace(go.Bar(
+                x=tl_a['steps'], y=[r * 100 for r in tl_a['run_fraction']],
+                name='Opaque', marker_color='#ff4444',
+            ))
+            fig_run.add_trace(go.Bar(
+                x=tl_b['steps'], y=[r * 100 for r in tl_b['run_fraction']],
+                name='Transparent', marker_color='#00ff88',
+            ))
+            fig_run.update_layout(
+                title='Withdrawal Rate per Step (%)',
+                xaxis_title='Step', yaxis_title='% Agents Withdrawing',
+                barmode='group',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                height=280, margin=dict(l=40, r=10, t=40, b=30),
+                yaxis=dict(range=[0, 105]),
+            )
+            st.plotly_chart(fig_run, use_container_width=True)
+
+        with st.expander("Step-by-step detail", expanded=False):
+            detail_a = pd.DataFrame({
+                'Step': tl_a['steps'],
+                'Runs (A)': tl_a['n_runs'],
+                'Run% (A)': [f"{x:.0%}" for x in tl_a['run_fraction']],
+                'P(def) A': [f"{x:.4f}" for x in tl_a['avg_belief']],
+                'Loss A ($B)': [f"{x/1e9:.2f}" for x in tl_a['cumulative_fire_sale_loss']],
+                'Runs (B)': tl_b['n_runs'],
+                'Run% (B)': [f"{x:.0%}" for x in tl_b['run_fraction']],
+                'P(def) B': [f"{x:.4f}" for x in tl_b['avg_belief']],
+                'Loss B ($B)': [f"{x/1e9:.2f}" for x in tl_b['cumulative_fire_sale_loss']],
+            })
+            st.dataframe(detail_a, use_container_width=True, hide_index=True)
+
+    # ==================================================================
+    #  🌍  CLIMATE RESULTS PANEL
+    # ==================================================================
+    if st.session_state.get('climate_results'):
+        cr = st.session_state.climate_results
+        df_c = st.session_state.df_climate
+
+        st.markdown("---")
+        st.markdown("### 🌍 Green Swan — Climate Transition Risk")
+        st.markdown(
+            "_A sudden carbon tax strands **Brown Assets** (fossil fuels). "
+            "US banks (high carbon exposure) absorb the direct hit, then "
+            "transmit losses to EU banks via interbank leverage — proving "
+            "climate risk is **systemic**._"
+        )
+
+        # ── Big metrics ──
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        with cc1:
+            st.metric(
+                "🏭 Brown Losses",
+                f"${cr['total_brown_loss'] / 1e9:,.1f}B",
+            )
+        with cc2:
+            st.metric(
+                "🌱 Green Gains",
+                f"${cr['total_green_gain'] / 1e9:,.1f}B",
+            )
+        with cc3:
+            st.metric(
+                "💀 Capital Destroyed",
+                f"${cr['equity_loss'] / 1e9:,.1f}B",
+            )
+        with cc4:
+            st.metric(
+                "🏦 Bank Failures",
+                cr['n_defaults'],
+            )
+
+        st.write(
+            "**Observe:** high-carbon US banks fail first, transmitting the shock "
+            "to low-carbon EU banks through interbank leverage. Even 'green' banks "
+            "are dragged into distress — climate risk is a *network* phenomenon."
+        )
+
+        # ── Regional breakdown ──
+        status_arr = cr['status']
+        regions_arr = df_c['region'].values
+        breakdown = []
+        for rgn in ['US', 'EU']:
+            rmask = (regions_arr == rgn)
+            breakdown.append({
+                'Region': rgn,
+                'Defaults': int(((status_arr == 'Default') & rmask).sum()),
+                'Distressed': int(((status_arr == 'Distressed') & rmask).sum()),
+                'Avg Carbon Score': f"{df_c.loc[rmask, 'carbon_score'].mean():.2f}",
+                'Brown Losses ($B)': f"{cr['climate_losses'][rmask].sum() / 1e9:,.1f}",
+                'Green Gains ($B)': f"{cr['climate_gains'][rmask].sum() / 1e9:,.1f}",
+            })
+        st.dataframe(
+            pd.DataFrame(breakdown),
+            use_container_width=True, hide_index=True,
+        )
+
+        # ── Top climate casualties ──
+        clim_col1, clim_col2 = st.columns(2)
+
+        with clim_col1:
+            top_n = 15
+            net_shock = cr['climate_net_shock']
+            worst_idx = np.argsort(net_shock)[::-1][:top_n]
+            casualty = pd.DataFrame({
+                'Bank': [str(df_c.iloc[i]['bank_name'])[:30] for i in worst_idx],
+                'Region': [df_c.iloc[i]['region'] for i in worst_idx],
+                'Carbon': [f"{df_c.iloc[i]['carbon_score']:.2f}" for i in worst_idx],
+                'Net Hit ($B)': [f"{net_shock[i] / 1e9:,.1f}" for i in worst_idx],
+                'Status': [status_arr[i] for i in worst_idx],
+            })
+            st.markdown("#### Top 15 Climate Casualties")
+            st.dataframe(casualty, use_container_width=True, hide_index=True)
+
+        with clim_col2:
+            # Carbon score vs status scatter
+            fig_cs = go.Figure()
+            color_map = {'Default': '#ff4444', 'Distressed': '#ffaa00', 'Safe': '#00ff88'}
+            for status_val, color in color_map.items():
+                mask = (status_arr == status_val)
+                if not mask.any():
+                    continue
+                fig_cs.add_trace(go.Scatter(
+                    x=df_c.loc[mask, 'carbon_score'],
+                    y=cr['climate_net_shock'][mask] / 1e9,
+                    mode='markers',
+                    name=status_val,
+                    marker=dict(
+                        color=color, size=8, opacity=0.7,
+                        line=dict(width=0.5, color='#333'),
+                    ),
+                    text=df_c.loc[mask, 'bank_name'].str[:25],
+                    hovertemplate='%{text}<br>CS: %{x:.2f}<br>Net Hit: $%{y:.1f}B<extra></extra>',
+                ))
+            fig_cs.update_layout(
+                title='Carbon Score vs Net Climate Shock',
+                xaxis_title='Carbon Score (0=Green, 1=Brown)',
+                yaxis_title='Net Climate Shock ($B)',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                height=380, margin=dict(l=50, r=20, t=50, b=40),
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            )
+            st.plotly_chart(fig_cs, use_container_width=True)
+
+        # ── Intraday timeline if available ──
+        if cr.get('price_timeline'):
+            steps = list(range(1, len(cr['price_timeline']) + 1))
+            tc1, tc2 = st.columns(2)
+            with tc1:
+                fig_cp = go.Figure()
+                fig_cp.add_trace(go.Scatter(
+                    x=steps, y=cr['price_timeline'],
+                    mode='lines+markers', name='Asset Price',
+                    line=dict(color='#ff4444', width=3),
+                    fill='tozeroy', fillcolor='rgba(255,68,68,0.12)',
+                ))
+                fig_cp.update_layout(
+                    title='Asset Price During Climate Cascade',
+                    xaxis_title='Step', yaxis_title='Price Multiplier',
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    height=280, margin=dict(l=40, r=10, t=40, b=30),
+                    yaxis=dict(range=[0, 1.05]),
+                )
+                st.plotly_chart(fig_cp, use_container_width=True)
+            with tc2:
+                fig_cd = go.Figure()
+                fig_cd.add_trace(go.Bar(
+                    x=steps, y=cr['defaults_timeline'],
+                    name='Defaults', marker_color='#ff4444',
+                ))
+                fig_cd.add_trace(go.Bar(
+                    x=steps, y=cr['distressed_timeline'],
+                    name='Distressed', marker_color='#ffaa00',
+                ))
+                fig_cd.update_layout(
+                    title='Climate-Induced Failures per Step',
+                    xaxis_title='Step', yaxis_title='Count', barmode='stack',
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    height=280, margin=dict(l=40, r=10, t=40, b=30),
+                )
+                st.plotly_chart(fig_cd, use_container_width=True)
+
     st.markdown("---")
-    st.caption("ENCS Systemic Risk Engine | Hybrid Rust/Python Architecture | Eisenberg-Noe + Intraday Fire Sales + GNN Risk Predictor")
+    st.caption("ENCS Systemic Risk Engine | Hybrid Rust/Python Architecture | Eisenberg-Noe + Intraday Fire Sales + GNN Risk Predictor + Global Games + Green Swan")
 if __name__ == "__main__":
     main()

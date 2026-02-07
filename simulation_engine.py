@@ -117,7 +117,6 @@ def apply_central_clearing(W_dense: np.ndarray, df: pd.DataFrame,
                 cleared_volume += w
                 edges_cleared += 1
             else:
-
                 W_new[i, j] = w
                 bilateral_volume += w
                 edges_bilateral += 1
