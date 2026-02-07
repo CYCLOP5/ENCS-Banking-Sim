@@ -136,10 +136,11 @@ def _single_mc_run(args):
     rng = np.random.RandomState(seed=seed_base + run_idx)
 
     # ── Determine regime ──────────────────────────────────────────────
+    # Skewed toward stressed to improve class balance (~40-45% risky)
     r = rng.random()
-    if r < 0.35:
+    if r < 0.20:
         regime = "calm"
-    elif r < 0.70:
+    elif r < 0.55:
         regime = "moderate"
     else:
         regime = "stressed"
@@ -152,25 +153,27 @@ def _single_mc_run(args):
     # ── Regime-specific parameters ────────────────────────────────────
     if regime == "calm":
         trigger_idx = int(rng.choice(pool_small if len(pool_small) > 0 else pool_all))
-        severity = float(rng.uniform(0.01, 0.10))
-        sigma = rng.uniform(0.01, 0.03)
-        panic_th = rng.uniform(0.30, 0.50)
-        alpha = rng.uniform(0.0005, 0.002)
+        severity = float(rng.uniform(0.01, 0.08))
+        sigma = rng.uniform(0.01, 0.02)
+        panic_th = rng.uniform(0.35, 0.50)
+        alpha = rng.uniform(0.0005, 0.0015)
         margin_sens = 0.0
     elif regime == "moderate":
-        trigger_idx = int(rng.choice(pool_mid if len(pool_mid) > 0 else pool_all))
-        severity = float(rng.uniform(0.05, 0.40))
-        sigma = rng.uniform(0.03, 0.06)
-        panic_th = rng.uniform(0.15, 0.30)
-        alpha = rng.uniform(0.001, 0.004)
-        margin_sens = rng.uniform(0.0, 0.5)
+        # Wider trigger pool: include some top-connected banks
+        pool_mod = np.concatenate([pool_mid, pool_top30[len(pool_top30)//2:]])
+        trigger_idx = int(rng.choice(pool_mod if len(pool_mod) > 0 else pool_all))
+        severity = float(rng.uniform(0.15, 0.55))
+        sigma = rng.uniform(0.04, 0.08)
+        panic_th = rng.uniform(0.10, 0.25)
+        alpha = rng.uniform(0.002, 0.006)
+        margin_sens = rng.uniform(0.1, 0.8)
     else:  # stressed
         trigger_idx = int(rng.choice(pool_top30))
-        severity = float(rng.uniform(0.30, 1.0))
-        sigma = rng.uniform(0.05, 0.10)
-        panic_th = rng.uniform(0.05, 0.15)
-        alpha = rng.uniform(0.004, 0.010)
-        margin_sens = rng.uniform(0.5, 2.0)
+        severity = float(rng.uniform(0.40, 1.0))
+        sigma = rng.uniform(0.06, 0.12)
+        panic_th = rng.uniform(0.03, 0.12)
+        alpha = rng.uniform(0.005, 0.012)
+        margin_sens = rng.uniform(0.8, 2.5)
 
     # ── Run simulation ────────────────────────────────────────────────
     state = sim.compute_state_variables(W_noisy, df)
@@ -210,12 +213,12 @@ def generate_dataset(
     Uses multiprocessing to parallelise across CPU cores.
     Returns a list of PyG Data objects.
 
-    Runs are split into three regimes so the model sees genuine Safe labels:
-      - CALM   (35%): tiny severity, no margin spirals, low fire-sale α,
+    Runs are split into three regimes so the model sees both classes:
+      - CALM   (20%): tiny severity, no margin spirals, low fire-sale α,
                        small-bank triggers → most nodes survive.
-      - MODERATE (35%): medium severity, mild margins & fire-sales,
-                        mixed trigger pool → partial cascade.
-      - STRESSED (30%): high severity, full margins & fire-sales,
+      - MODERATE (35%): medium-high severity, margins & fire-sales,
+                        mixed trigger pool incl. some top banks → partial cascade.
+      - STRESSED (45%): high severity, full margins & fire-sales,
                         top-connected triggers → mass default.
     """
     print("\n" + "=" * 60)
