@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Send, X, Sparkles, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import { Rnd } from "react-rnd";
 import { motion, AnimatePresence } from "framer-motion";
 import createPlotlyComponent from "react-plotly.js/factory";
@@ -30,9 +32,141 @@ function tryParseJson(text) {
 
 function normalizeText(text) {
   if (!text || typeof text !== "string") return "";
-  const withBreaks = text.replace(/<\s*br\s*\/?>/gi, "\n");
-  return withBreaks.replace(/<[^>]+>/g, "");
+  let s = text;
+  s = s.replace(/<\s*br\s*\/?>/gi, "\n");
+  s = s.replace(/<[^>]+>/g, "");
+  s = s.replace(/\r/g, "");
+  s = s.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  s = s.replace(/\n[ \t]*:\s*\n/g, ": ");
+  s = s.replace(/([A-Za-z])\s*\n\s*:\s*/g, "$1: ");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  s = s.replace(/[ \t]+\n/g, "\n");
+  s = s.trim();
+  s = rescueBareLatex(s);
+  return s;
 }
+
+/* ── Unicode → LaTeX maps ──────────────────────────────────────── */
+const SUPERSCRIPT_MAP = {
+  "\u00b9":"1","\u00b2":"2","\u00b3":"3","\u2074":"4","\u2075":"5",
+  "\u2076":"6","\u2077":"7","\u2078":"8","\u2079":"9","\u2070":"0",
+};
+const GREEK_TO_CMD = {
+  "\u03b1":"\\alpha","\u03b2":"\\beta","\u03b3":"\\gamma","\u03b4":"\\delta",
+  "\u03b5":"\\epsilon","\u03b6":"\\zeta","\u03b7":"\\eta","\u03b8":"\\theta",
+  "\u03b9":"\\iota","\u03ba":"\\kappa","\u03bb":"\\lambda","\u03bc":"\\mu",
+  "\u03bd":"\\nu","\u03be":"\\xi","\u03c0":"\\pi","\u03c1":"\\rho",
+  "\u03c3":"\\sigma","\u03c4":"\\tau","\u03c5":"\\upsilon","\u03c6":"\\phi",
+  "\u03c7":"\\chi","\u03c8":"\\psi","\u03c9":"\\omega",
+};
+const GREEK_RE = new RegExp(Object.keys(GREEK_TO_CMD).join("|"), "g");
+
+/**
+ * If the text already contains $...$ delimiters the LLM did the right thing
+ * and we leave it alone. Otherwise we:
+ *   1. normalise Unicode superscripts / subscripts / Greek / operators
+ *   2. find contiguous math expressions and wrap each one in $...$
+ */
+function rescueBareLatex(text) {
+  if (/\$/.test(text)) return text;               // already delimited
+
+  // Fix control characters that often replace backslash
+  text = text.replace(/\f/g, "\\");
+  // Normalize broken punctuation from model outputs (e.g., "h ;=; 1 ;-; ...")
+  text = text.replace(/\s*;\s*=\s*;\s*/g, " = ");
+  text = text.replace(/\s*;\s*-\s*;\s*/g, " - ");
+  text = text.replace(/\s*;\s*\/\s*;\s*/g, " / ");
+  text = text.replace(/\s*;\s*/g, "; ");
+
+  // Unicode superscripts → ^{…}
+  text = text.replace(/(\d)([\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079\u2070]+)/g, (_, b, sup) => {
+    const digits = sup.split("").map(c => SUPERSCRIPT_MAP[c] || "").join("");
+    return `${b}^{${digits}}`;
+  });
+  // Unicode subscripts
+  text = text.replace(/\u209c/g, "_t");
+  text = text.replace(/\u2090/g, "_a");
+  text = text.replace(/\u1d62/g, "_i");
+  // Operators
+  text = text.replace(/[\u00b7\u22c5\u00d7]/g, "\\cdot ");
+  text = text.replace(/[\u2011\u2212\u2013]/g, "-");
+  // Greek → \\cmd
+  text = text.replace(GREEK_RE, m => GREEK_TO_CMD[m] || m);
+
+  // Fix common missing \\text{...} patterns for subscripts
+  text = text.replace(/_\{\s*ext\s*\{/g, "_{\\text{");
+  text = text.replace(/_ext\s*\{/g, "_{\\text{");
+  text = text.replace(/\b([A-Z])ext([A-Za-z]+)\b/g, (_, lead, tail) => `${lead}_{\\text{${tail}}}`);
+  // Repair stray 'ext{...}' without backslash
+  text = text.replace(/\bext\s*\{/g, "\\text{");
+
+  // Collapse duplicated immediate tokens like P_{\text{sell}}P_{\text{sell}}
+  text = text.replace(/(\b[A-Z]_{\\text\{[A-Za-z]+\}})\1+/g, "$1");
+
+  // Walk each line, find math segments, wrap them
+  return text.split("\n").map(wrapMathInLine).join("\n");
+}
+
+/**
+ * Scan a single line for contiguous math expressions and wrap each in $…$.
+ * A "math expression" is a token run that contains at least one of: _ ^ {} = \\cmd
+ * bounded by word-boundary or punctuation on each side.
+ *
+ * Examples that should be wrapped:
+ *   P_{t+1}=P_t\\cdot e^{-\\alpha V_t/10^{12}}
+ *   \\alpha
+ *
+ * Examples that should NOT be wrapped:
+ *   "A fire-sale haircut is the discount applied…"
+ */
+function wrapMathInLine(line) {
+  if (!line || line.includes("$")) return line;
+  if (!/[_^{}]|\\[a-zA-Z]/.test(line)) return line;
+
+  // Regex: match contiguous math-like runs.
+  // A math run starts with a letter, digit, or backslash and continues through
+  // characters typical in math (letters, digits, _^{}()=+-*/ and \\commands).
+  // It must contain at least one math indicator: _ ^ { } or \\letter.
+  const MATH_SEG = /(?:[A-Za-z0-9\\{(])(?:[A-Za-z0-9_^{}()[\]=+\-*\/.,·: \\])*?(?:[_^{}]|\\[a-zA-Z]+)(?:[A-Za-z0-9_^{}()[\]=+\-*\/.,·\\})]*)/g;
+
+  let result = "";
+  let lastIdx = 0;
+  let match;
+  while ((match = MATH_SEG.exec(line)) !== null) {
+    let seg = match[0].trim();
+    if (seg.length < 2) continue;
+    // Must actually contain a math indicator
+    if (!/[_^{}]|\\[a-zA-Z]/.test(seg)) continue;
+
+    // Strip trailing prose-punctuation that isn't math
+    const trailMatch = seg.match(/([.,;:!?)\]]+)$/);
+    let trailing = "";
+    if (trailMatch) {
+      // Keep closing braces/parens that are math, strip sentence-ending punct
+      const trailStr = trailMatch[1];
+      // Count if braces are balanced; only strip truly trailing punct
+      const stripped = trailStr.replace(/[.,;:!?]+$/, "");
+      trailing = trailStr.slice(stripped.length);
+      seg = seg.slice(0, seg.length - trailing.length);
+    }
+
+    // Don't wrap if it looks like a normal English word that just happens
+    // to be near a backslash (very short, no operators)
+    if (seg.length < 2) continue;
+
+    result += line.slice(lastIdx, match.index);
+    result += `$${seg}$${trailing}`;
+    lastIdx = match.index + match[0].length;
+  }
+  result += line.slice(lastIdx);
+  return result;
+}
+
+const markdownProps = {
+  remarkPlugins: [remarkGfm, remarkMath],
+  rehypePlugins: [rehypeKatex],
+  className: "prose prose-invert prose-sm max-w-none",
+};
 
 function buildChartFromEvidence(chart, evidence) {
   if (!chart || !evidence) return null;
@@ -172,8 +306,7 @@ function AssistantContent({ content, evidence }) {
   if (!parsed || typeof parsed !== "object") {
     return (
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        className="prose prose-invert prose-sm max-w-none"
+        {...markdownProps}
       >
         {normalizeText(content)}
       </ReactMarkdown>
@@ -205,8 +338,7 @@ function AssistantContent({ content, evidence }) {
       </div>
       {summary && (
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          className="prose prose-invert prose-sm max-w-none"
+          {...markdownProps}
         >
           {summary}
         </ReactMarkdown>
@@ -232,7 +364,7 @@ function AssistantContent({ content, evidence }) {
         <ul className="list-disc list-inside text-[11px] text-text-secondary space-y-1">
           {points.map((pt, i) => (
             <li key={i}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-invert prose-sm max-w-none">
+              <ReactMarkdown {...markdownProps}>
                 {pt}
               </ReactMarkdown>
             </li>
@@ -416,8 +548,7 @@ export default function Chatbot() {
                         <AssistantContent content={m.content} evidence={m.evidence} />
                       ) : (
                         <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          className="prose prose-invert prose-sm max-w-none"
+                          {...markdownProps}
                         >
                           {normalizeText(m.content)}
                         </ReactMarkdown>

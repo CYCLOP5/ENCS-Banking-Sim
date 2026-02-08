@@ -28,6 +28,8 @@
     "@tanstack/react-table": "^8.20.0",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
+    "remark-math": "^6.0.0",
+    "rehype-katex": "^7.0.1",
     "react-rnd": "^10.4.3",
     "plotly.js-dist": "^2.35.2",
     "react-plotly.js": "^2.6.0"
