@@ -22,6 +22,7 @@ DEFAULT_DISTRESS_THRESHOLD = 0.5
 EU_INTERBANK_RATIO = 0.15
 US_INTERBANK_RATIO = 0.10  # Fixed: was 0.40, real-world is <10% for large banks
 DERIV_MULTIPLIER = 1.5
+DERIVATIVES_NETTING_RATIO = 0.02  # Proxies conversion from Gross Notional to Net Fair Value
 def load_and_align_network():
     """
     Load adjacency matrix and node data with proper alignment.
@@ -195,10 +196,13 @@ def compute_state_variables(W_dense: np.ndarray, df: pd.DataFrame):
         print("  ⚠ WARNING: Obligations near zero - check matrix scaling!")
 
     if 'deriv_ir_notional' in df.columns:
-        derivatives_exposure = df['deriv_ir_notional'].fillna(0).values.copy()
+        # Load raw Gross Notional, but scale down to Net Fair Value
+        # to prevent unrealistic "Butterfly Effect" margin spirals.
+        raw_notional = df['deriv_ir_notional'].fillna(0).values
+        derivatives_exposure = raw_notional * DERIVATIVES_NETTING_RATIO
     else:
         derivatives_exposure = np.zeros(n)
-    print(f"  Derivatives Exposure: ${derivatives_exposure.sum() / 1e12:.2f}T ({(derivatives_exposure > 0).sum()} banks)")
+    print(f"  Derivatives Exposure (Net): ${derivatives_exposure.sum() / 1e12:.2f}T ({(derivatives_exposure > 0).sum()} banks)")
 
     return {
         'obligations': obligations,
@@ -689,7 +693,7 @@ def run_strategic_intraday_simulation(
                 borrower_idx=j,
                 risk_aversion=lam,
                 exposure=W[i, j],
-                alpha=public_precision,  # Pass dynamic alpha
+                # alpha removed
             )
 
     print(f"  Trigger:           {trigger_name}")
