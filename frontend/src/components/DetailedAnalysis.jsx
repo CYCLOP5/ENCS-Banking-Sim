@@ -105,21 +105,21 @@ function MechanicalDetail({ results }) {
 
   const status = results.status ?? [];
   const bankNames = results.bank_names ?? [];
-    const isValidName = (name) => {
-      if (name === null || name === undefined) return false;
-      const s = String(name).trim();
-      if (s.length === 0) return false;
-      const lower = s.toLowerCase();
-      return lower !== "nan" && lower !== "0";
-    };
+  const isValidName = (name) => {
+    if (name === null || name === undefined) return false;
+    const s = String(name).trim();
+    if (s.length === 0) return false;
+    const lower = s.toLowerCase();
+    return lower !== "nan" && lower !== "0";
+  };
 
-    const isValidEntry = (entry) => {
-      if (!isValidName(entry.name)) return false;
-      const nameStr = String(entry.name).trim();
-      const isPlaceholder = /^bank\s+\d+$/i.test(nameStr);
-      const allZero = (entry.initial ?? 0) === 0 && (entry.final ?? 0) === 0;
-      return !(isPlaceholder && allZero);
-    };
+  const isValidEntry = (entry) => {
+    if (!isValidName(entry.name)) return false;
+    const nameStr = String(entry.name).trim();
+    const isPlaceholder = /^bank\s+\d+$/i.test(nameStr);
+    const allZero = (entry.initial ?? 0) === 0 && (entry.final ?? 0) === 0;
+    return !(isPlaceholder && allZero);
+  };
   const initialEq = results.initial_equity ?? [];
   const finalEq = results.final_equity ?? [];
 
@@ -209,8 +209,8 @@ function MechanicalDetail({ results }) {
           value={
             results.final_asset_price !== undefined
               ? (results.final_asset_price * 100 < 0.1 && results.final_asset_price > 0
-                  ? "< 0.1%"
-                  : `${(results.final_asset_price * 100).toFixed(1)}%`)
+                ? "< 0.1%"
+                : `${(results.final_asset_price * 100).toFixed(1)}%`)
               : "100%"
           }
           icon={TrendingDown}
@@ -801,13 +801,17 @@ function StrategicDetail({ results }) {
                         <span className="text-text-secondary">${(cumLoss / 1e9).toFixed(3)}B cumulative</span>
                       </div>
                       {flippedToRun.length > 0 && (
-                        <div className="text-crisis-red/80 text-[10px] mt-1">
-                          → Flipped to <span className="font-bold">WITHDRAW</span>: {flippedToRun.join(", ")}
+                        <div className="text-crisis-red/90 text-[10px] mt-2 leading-relaxed bg-crisis-red/5 p-2 rounded border border-crisis-red/10">
+                          <span className="font-bold uppercase tracking-wider text-[9px] opacity-70 block mb-1">Flipped to WITHDRAW ({flippedToRun.length})</span>
+                          {flippedToRun.slice(0, 8).join(", ")}
+                          {flippedToRun.length > 8 && <span className="text-crisis-red/60 italic"> ...and {flippedToRun.length - 8} others</span>}
                         </div>
                       )}
                       {flippedToStay.length > 0 && (
-                        <div className="text-stability-green/80 text-[10px] mt-1">
-                          → Flipped to <span className="font-bold">ROLL OVER</span>: {flippedToStay.join(", ")}
+                        <div className="text-stability-green/90 text-[10px] mt-2 leading-relaxed bg-stability-green/5 p-2 rounded border border-stability-green/10">
+                          <span className="font-bold uppercase tracking-wider text-[9px] opacity-70 block mb-1">Flipped to ROLL OVER ({flippedToStay.length})</span>
+                          {flippedToStay.slice(0, 8).join(", ")}
+                          {flippedToStay.length > 8 && <span className="text-stability-green/60 italic"> ...and {flippedToStay.length - 8} others</span>}
                         </div>
                       )}
                     </div>
@@ -850,13 +854,17 @@ function StrategicDetail({ results }) {
                         <span className="text-text-secondary">${(cumLoss / 1e9).toFixed(3)}B cumulative</span>
                       </div>
                       {flippedToRun.length > 0 && (
-                        <div className="text-crisis-red/80 text-[10px] mt-1">
-                          → Flipped to <span className="font-bold">WITHDRAW</span>: {flippedToRun.join(", ")}
+                        <div className="text-crisis-red/90 text-[10px] mt-2 leading-relaxed bg-crisis-red/5 p-2 rounded border border-crisis-red/10">
+                          <span className="font-bold uppercase tracking-wider text-[9px] opacity-70 block mb-1">Flipped to WITHDRAW ({flippedToRun.length})</span>
+                          {flippedToRun.slice(0, 8).join(", ")}
+                          {flippedToRun.length > 8 && <span className="text-crisis-red/60 italic"> ...and {flippedToRun.length - 8} others</span>}
                         </div>
                       )}
                       {flippedToStay.length > 0 && (
-                        <div className="text-stability-green/80 text-[10px] mt-1">
-                          → Flipped to <span className="font-bold">ROLL OVER</span>: {flippedToStay.join(", ")}
+                        <div className="text-stability-green/90 text-[10px] mt-2 leading-relaxed bg-stability-green/5 p-2 rounded border border-stability-green/10">
+                          <span className="font-bold uppercase tracking-wider text-[9px] opacity-70 block mb-1">Flipped to ROLL OVER ({flippedToStay.length})</span>
+                          {flippedToStay.slice(0, 8).join(", ")}
+                          {flippedToStay.length > 8 && <span className="text-stability-green/60 italic"> ...and {flippedToStay.length - 8} others</span>}
                         </div>
                       )}
                     </div>
@@ -1016,8 +1024,8 @@ export default function DetailedAnalysis({ open, onClose, results, tab }) {
   const title = isGame
     ? "Strategic Simulation — Global Games A/B Test"
     : tab === "climate"
-    ? "Green Swan — Climate Transition Risk Analysis"
-    : "Mechanical Simulation — Detailed Analysis";
+      ? "Green Swan — Climate Transition Risk Analysis"
+      : "Mechanical Simulation — Detailed Analysis";
 
   return (
     <AnimatePresence>

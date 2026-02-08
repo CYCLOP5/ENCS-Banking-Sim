@@ -19,13 +19,13 @@ const REGION_COLORS = {
 };
 
 /* ── Layout tuning constants ─────────────────────────────────────── */
-const NODE_HARD_CAP   = 350;
+const NODE_HARD_CAP = 350;
 const CHARGE_STRENGTH = -300;   // repulsive force (default d3 is -30, far too weak)
 const CHARGE_MAX_DIST = 800;    // beyond this distance charge has no effect
-const COLLISION_PAD   = 4;      // extra spacing around each node's collision radius
-const LINK_DIST_HIGH  = 250;    // link distance for high-value edges (was 120)
-const LINK_DIST_MED   = 400;    // link distance for medium-value edges (was 200)
-const LINK_DIST_LOW   = 600;    // link distance for low-value edges (was 350)
+const COLLISION_PAD = 4;      // extra spacing around each node's collision radius
+const LINK_DIST_HIGH = 250;    // link distance for high-value edges (was 120)
+const LINK_DIST_MED = 400;    // link distance for medium-value edges (was 200)
+const LINK_DIST_LOW = 600;    // link distance for low-value edges (was 350)
 const CENTER_STRENGTH = 0.04;   // gentle pull toward origin
 
 /**
@@ -58,20 +58,20 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   const [mounted, setMounted] = useState(false);
 
   /* ── Contagion state lives in refs to avoid triggering enriched/nodeThreeObject ── */
-  const contagionActiveRef  = useRef(contagionActiveProp);
-  const contagionSetRef     = useRef(contagionSetProp);
-  const contagionLinksRef   = useRef(contagionLinksProp);
+  const contagionActiveRef = useRef(contagionActiveProp);
+  const contagionSetRef = useRef(contagionSetProp);
+  const contagionLinksRef = useRef(contagionLinksProp);
 
   /* ── Game playback state refs ── */
-  const gameActiveRef      = useRef(gameActiveProp);
-  const gameStatusMapRef   = useRef(gameStatusMapProp);
-  const gameFlippedSetRef  = useRef(gameFlippedSetProp);
+  const gameActiveRef = useRef(gameActiveProp);
+  const gameStatusMapRef = useRef(gameStatusMapProp);
+  const gameFlippedSetRef = useRef(gameFlippedSetProp);
 
   // Keep contagion refs in sync with props
   useEffect(() => {
     contagionActiveRef.current = contagionActiveProp;
-    contagionSetRef.current    = contagionSetProp;
-    contagionLinksRef.current  = contagionLinksProp;
+    contagionSetRef.current = contagionSetProp;
+    contagionLinksRef.current = contagionLinksProp;
 
     // Imperatively update every cached mesh to reflect new contagion state
     if (!gameActiveRef.current) applyContagionVisuals();
@@ -79,8 +79,8 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
 
   // Keep game refs in sync with props
   useEffect(() => {
-    gameActiveRef.current     = gameActiveProp;
-    gameStatusMapRef.current  = gameStatusMapProp;
+    gameActiveRef.current = gameActiveProp;
+    gameStatusMapRef.current = gameStatusMapProp;
     gameFlippedSetRef.current = gameFlippedSetProp;
 
     applyGameVisuals();
@@ -90,9 +90,9 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
 
   /* ── Geometry cache — shared across all nodes ── */
   const geometries = useMemo(() => ({
-    large:  new THREE.SphereGeometry(1, 12, 12),
+    large: new THREE.SphereGeometry(1, 12, 12),
     medium: new THREE.SphereGeometry(1, 8, 8),
-    small:  new THREE.SphereGeometry(1, 6, 6),
+    small: new THREE.SphereGeometry(1, 6, 6),
   }), []);
 
   /* ── Node mesh cache: Map<nodeId, THREE.Mesh> — lets us mutate in-place ── */
@@ -152,8 +152,8 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     // Filter links (only when a node subset was selected)
     const filteredLinks = kept
       ? allLinks.filter(
-          (l) => kept.has(l.source?.id ?? l.source) && kept.has(l.target?.id ?? l.target)
-        )
+        (l) => kept.has(l.source?.id ?? l.source) && kept.has(l.target?.id ?? l.target)
+      )
       : allLinks;
 
     // Shallow-copy only the nodes that survived filtering and enrich with colour/size.
@@ -183,8 +183,8 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
      Zero React re-renders. O(N) at worst, typically O(delta) for new reveals.
      ═══════════════════════════════════════════════════════════════════════ */
   const applyContagionVisuals = useCallback(() => {
-    const cache    = meshCacheRef.current;
-    const active   = contagionActiveRef.current;
+    const cache = meshCacheRef.current;
+    const active = contagionActiveRef.current;
     const revealed = contagionSetRef.current;
 
     // Skip if game mode is active (game visuals take priority)
@@ -205,32 +205,32 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
           color = STATUS_COLORS[st] || STATUS_COLORS.Safe;
           const isHit = st === "Default" || st === "Distressed";
           if (isHit) {
-            scale   = baseVal * 1.8 * 1.2;
+            scale = baseVal * 1.8 * 1.2;
             opacity = 1.0;
             emissive = 0.7;
           } else {
-            scale   = baseVal * 0.45 * 1.2;
+            scale = baseVal * 0.45 * 1.2;
             opacity = 0.2;
             emissive = 0.1;
           }
         } else {
-          color    = "#3c3c50";
-          scale    = baseVal * 0.25 * 1.2;
-          opacity  = 0.06;
+          color = "#3c3c50";
+          scale = baseVal * 0.25 * 1.2;
+          opacity = 0.06;
           emissive = 0;
         }
       } else {
         // Normal (non-contagion) appearance
-        color    = node.color;
-        scale    = baseVal * 1.2;
-        opacity  = 0.9;
+        color = node.color;
+        scale = baseVal * 1.2;
+        opacity = 0.9;
         emissive = 0.25;
       }
 
       // Mutate material in-place (no new allocation)
       const mat = mesh.material;
       mat.color.set(color);
-      mat.opacity  = opacity;
+      mat.opacity = opacity;
       mat.emissive.set(color);
       mat.emissiveIntensity = emissive;
       mat.depthWrite = opacity > 0.3;
@@ -246,9 +246,9 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
      Flipped nodes get a 1.5x scale pulse. Non-game nodes are dimmed.
      ═════════════════════════════════════════════════════════════════════ */
   const applyGameVisuals = useCallback(() => {
-    const cache      = meshCacheRef.current;
-    const active     = gameActiveRef.current;
-    const statusObj  = gameStatusMapRef.current;
+    const cache = meshCacheRef.current;
+    const active = gameActiveRef.current;
+    const statusObj = gameStatusMapRef.current;
     const flippedSet = gameFlippedSetRef.current;
 
     if (cache.size === 0) return;
@@ -265,34 +265,34 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
         const isFlipped = flippedSet && flippedSet.has(nodeId);
 
         if (decision === "WITHDRAW") {
-          color    = "#ff2a6d"; // crisis red
-          scale    = baseVal * (isFlipped ? 2.2 : 1.6) * 1.2;
-          opacity  = 1.0;
+          color = "#ff2a6d"; // crisis red
+          scale = baseVal * (isFlipped ? 2.2 : 1.6) * 1.2;
+          opacity = 1.0;
           emissive = isFlipped ? 0.9 : 0.7;
         } else {
           // ROLL_OVER = green = staying
-          color    = "#00e676"; // stability green
-          scale    = baseVal * (isFlipped ? 1.6 : 1.0) * 1.2;
-          opacity  = isFlipped ? 1.0 : 0.8;
+          color = "#00e676"; // stability green
+          scale = baseVal * (isFlipped ? 1.6 : 1.0) * 1.2;
+          opacity = isFlipped ? 1.0 : 0.8;
           emissive = isFlipped ? 0.6 : 0.3;
         }
       } else if (active) {
         // Non-game node — dim it
-        color    = "#3c3c50";
-        scale    = baseVal * 0.25 * 1.2;
-        opacity  = 0.06;
+        color = "#3c3c50";
+        scale = baseVal * 0.25 * 1.2;
+        opacity = 0.06;
         emissive = 0;
       } else {
         // Game not active: normal appearance
-        color    = node.color;
-        scale    = baseVal * 1.2;
-        opacity  = 0.9;
+        color = node.color;
+        scale = baseVal * 1.2;
+        opacity = 0.9;
         emissive = 0.25;
       }
 
       const mat = mesh.material;
       mat.color.set(color);
-      mat.opacity  = opacity;
+      mat.opacity = opacity;
       mat.emissive.set(color);
       mat.emissiveIntensity = emissive;
       mat.depthWrite = opacity > 0.3;
@@ -328,25 +328,25 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
         // PRIORITY: Stop the tick loop immediately by zeroing cooldown.
         // This is a safe property set in most versions of force-graph.
         if (typeof fg.cooldownTime === 'function') {
-           fg.cooldownTime(0); 
+          fg.cooldownTime(0);
         }
 
         // Then attempt to zero alpha target (which interacts with layout).
         // Wrapping this separately because accessing layout can throw if undefined.
         if (typeof fg.d3AlphaTarget === 'function') {
-           try {
-              fg.d3AlphaTarget(0);
-           } catch (e) { /* ignore layout missing error */ }
+          try {
+            fg.d3AlphaTarget(0);
+          } catch (e) { /* ignore layout missing error */ }
         }
 
         setTimeout(() => {
-            if (fgRef.current && typeof fgRef.current.cooldownTime === 'function') {
-               fgRef.current.cooldownTime(10000);
-            }
-        }, 100); 
+          if (fgRef.current && typeof fgRef.current.cooldownTime === 'function') {
+            fgRef.current.cooldownTime(10000);
+          }
+        }, 100);
       } catch (_) { /* layout not ready yet — safe to ignore */ }
     },
-    pauseRendering()  { fgRef.current?.pauseAnimation(); },
+    pauseRendering() { fgRef.current?.pauseAnimation(); },
     resumeRendering() { fgRef.current?.resumeAnimation(); },
   }), [enriched.nodes]);
 
@@ -379,7 +379,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
      ═══════════════════════════════════════════════════════════════════════ */
   useEffect(() => {
     const fg = fgRef.current;
-    
+
     // Robust check: Ensure fg exists, is mounted, and has nodes to render
     if (!fg || !mounted || enriched.nodes.length === 0) return;
 
@@ -412,10 +412,10 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       } catch (err) {
         console.warn("Simulation reheat skipped:", err);
       }
-      
+
       // Zoom to fit after layout settles
       zoomTimer = setTimeout(() => {
-          if (fgRef.current) fgRef.current.zoomToFit(600, 80);
+        if (fgRef.current) fgRef.current.zoomToFit(600, 80);
       }, 1200);
 
     }, 10);
@@ -454,7 +454,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     const key = `${src}-${tgt}`;
     const keyRev = `${tgt}-${src}`;
     const active = contagionActiveRef.current;
-    const links  = contagionLinksRef.current;
+    const links = contagionLinksRef.current;
     if (active && links) {
       if (links.has(key) || links.has(keyRev)) {
         const srcHit = statusMap[src] === "Default" || statusMap[src] === "Distressed";
@@ -470,7 +470,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
 
   const linkWidth = useCallback((link) => {
     const active = contagionActiveRef.current;
-    const links  = contagionLinksRef.current;
+    const links = contagionLinksRef.current;
     if (!active || !links) return 0.4;
     const src = link.source?.id ?? link.source;
     const tgt = link.target?.id ?? link.target;
@@ -486,7 +486,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     const key = `${src}-${tgt}`;
     const keyRev = `${tgt}-${src}`;
     const active = contagionActiveRef.current;
-    const links  = contagionLinksRef.current;
+    const links = contagionLinksRef.current;
     if (active && links) {
       if (links.has(key) || links.has(keyRev)) {
         const srcHit = statusMap[src] === "Default" || statusMap[src] === "Distressed";
@@ -500,7 +500,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
 
   const linkParticleWidth = useCallback((link) => {
     const active = contagionActiveRef.current;
-    const links  = contagionLinksRef.current;
+    const links = contagionLinksRef.current;
     if (!active || !links) return 0.8;
     const src = link.source?.id ?? link.source;
     const tgt = link.target?.id ?? link.target;
@@ -518,7 +518,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
 
   const linkParticleColor = useCallback((link) => {
     const active = contagionActiveRef.current;
-    const links  = contagionLinksRef.current;
+    const links = contagionLinksRef.current;
     if (!active || !links) return "#32e0c4";
     const src = link.source?.id ?? link.source;
     const tgt = link.target?.id ?? link.target;
@@ -539,7 +539,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   const labelSprites = useRef(new Map());
 
   useEffect(() => {
-    const active   = contagionActiveProp;
+    const active = contagionActiveProp;
     const revealed = contagionSetProp;
 
     if (!active || !revealed || !fgRef.current) {
@@ -586,9 +586,9 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   const gameLabelSprites = useRef(new Map());
 
   useEffect(() => {
-    const active  = gameActiveProp;
+    const active = gameActiveProp;
     const flipped = gameFlippedSetProp;
-    const sMap    = gameStatusMapProp;
+    const sMap = gameStatusMapProp;
 
     if (!active || !flipped || flipped.size === 0 || !fgRef.current) {
       // Cleanup game labels when game stops
@@ -628,52 +628,79 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       fgRef.current.scene().add(label);
       gameLabelSprites.current.set(nid, label);
 
-      const timer = setTimeout(() => {
-        fgRef.current?.scene().remove(label);
-        gameLabelSprites.current.delete(nid);
-        gameLabelTimers.current.delete(nid);
-      }, 2000);
-      gameLabelTimers.current.set(nid, timer);
+      // No timeout: Label persists until game ends or node un-flips
+      gameLabelTimers.current.set(nid, null);
     }
   }, [gameFlippedSetProp, gameActiveProp, gameStatusMapProp, enriched.nodes]);
 
+  /* ── Ambient Traffic: US Activity Injection ── */
+  useEffect(() => {
+    // Only run if NO simulation is active
+    if (gameActiveProp || contagionActiveProp) return;
+
+    // User requested more "data flowing visualization" in the US side when idle.
+    // We randomly pick US-connected links and emit a single particle.
+    const interval = setInterval(() => {
+      if (!fgRef.current) return;
+      const links = enriched.links;
+      if (!links || links.length === 0) return;
+
+      // Filter for US links (Source or Target is US)
+      const usLinks = links.filter(l => {
+        const srcRegion = l.source?.region ?? enriched.nodes.find(n => n.id === l.source)?.region;
+        const tgtRegion = l.target?.region ?? enriched.nodes.find(n => n.id === l.target)?.region;
+        return srcRegion === "US" || tgtRegion === "US";
+      });
+
+      if (usLinks.length > 0) {
+        // Emit random particles per tick
+        for (let i = 0; i < 3; i++) {
+          const l = usLinks[Math.floor(Math.random() * usLinks.length)];
+          fgRef.current.emitParticle(l);
+        }
+      }
+    }, 150); // Every 150ms
+
+    return () => clearInterval(interval);
+  }, [gameActiveProp, contagionActiveProp, enriched]);
+
   if (!mounted) return null;
 
-  return (
-    <ForceGraph3D
-      ref={fgRef}
-      graphData={enriched}
-      width={width}
-      height={height}
-      backgroundColor="rgba(0,0,0,0)"
-      nodeThreeObject={nodeThreeObject}
-      nodeLabel={(n) =>
-        `<div style="background:rgba(10,10,18,0.92);padding:8px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);font-family:Inter,sans-serif;font-size:12px;line-height:1.5;backdrop-filter:blur(8px);">
+return (
+  <ForceGraph3D
+    ref={fgRef}
+    graphData={enriched}
+    width={width}
+    height={height}
+    backgroundColor="rgba(0,0,0,0)"
+    nodeThreeObject={nodeThreeObject}
+    nodeLabel={(n) =>
+      `<div style="background:rgba(10,10,18,0.92);padding:8px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.08);font-family:Inter,sans-serif;font-size:12px;line-height:1.5;backdrop-filter:blur(8px);">
           <strong style="color:#fff">${n.name}</strong><br/>
           <span style="color:${REGION_COLORS[n.region] || '#888'}">${n.region}</span> · 
           <span style="color:#999">$${(n.total_assets / 1e9).toFixed(1)}B</span>
         </div>`
-      }
-      linkColor={linkColor}
-      linkWidth={linkWidth}
-      linkOpacity={0.35}
-      linkDirectionalParticles={linkParticles}
-      linkDirectionalParticleWidth={linkParticleWidth}
-      linkDirectionalParticleSpeed={linkParticleSpeed}
-      linkDirectionalParticleColor={linkParticleColor}
-      onNodeClick={onNodeClick}
-      onBackgroundClick={onBackgroundClick}
-      enableNodeDrag={false}
-      warmupTicks={200}
-      cooldownTime={10000}
-      d3AlphaDecay={0.02}
-      d3VelocityDecay={0.2}
-      d3AlphaMin={0.001}
-      dagMode={null}
-      linkDistance={linkDistanceFn}
-      nodeRelSize={1.5}
-    />
-  );
+    }
+    linkColor={linkColor}
+    linkWidth={linkWidth}
+    linkOpacity={0.35}
+    linkDirectionalParticles={linkParticles}
+    linkDirectionalParticleWidth={linkParticleWidth}
+    linkDirectionalParticleSpeed={linkParticleSpeed}
+    linkDirectionalParticleColor={linkParticleColor}
+    onNodeClick={onNodeClick}
+    onBackgroundClick={onBackgroundClick}
+    enableNodeDrag={false}
+    warmupTicks={200}
+    cooldownTime={10000}
+    d3AlphaDecay={0.02}
+    d3VelocityDecay={0.2}
+    d3AlphaMin={0.001}
+    dagMode={null}
+    linkDistance={linkDistanceFn}
+    nodeRelSize={1.5}
+  />
+);
 });
 
 export default NetworkGraph3D;

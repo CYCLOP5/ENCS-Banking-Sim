@@ -724,6 +724,16 @@ def run_strategic_intraday_simulation(
     gridlock_timeline    = []
     equity_loss_timeline = []
     margin_calls_timeline = []
+    
+    # New metrics requested
+    avg_belief_timeline = []
+    run_fraction_timeline = []
+    n_runs_timeline = []
+    cumulative_fire_sale_loss_timeline = []
+    step_fire_sale_loss_timeline = []
+    decisions_timeline = []  # Added for frontend visualization
+    current_cumulative_fire_sale_loss = 0.0
+
     systemic_credit_losses = 0.0   # margin defaults (not fire-sale pressure)
     cb_triggered = False
     cb_step      = None
@@ -755,6 +765,13 @@ def run_strategic_intraday_simulation(
             gridlock_timeline.append(0)
             equity_loss_timeline.append(eq_loss)
             margin_calls_timeline.append(0.0)
+            # Append 0/current for new metrics when frozen
+            avg_belief_timeline.append(0.0)
+            run_fraction_timeline.append(0.0)
+            n_runs_timeline.append(0)
+            cumulative_fire_sale_loss_timeline.append(current_cumulative_fire_sale_loss)
+            step_fire_sale_loss_timeline.append(0.0)
+            decisions_timeline.append(["ROLL_OVER"] * n)
             continue
 
         # ── Per-borrower solvency (public observable) ────────────────────
@@ -782,6 +799,12 @@ def run_strategic_intraday_simulation(
         total_withdrawn_per_bank = np.zeros(n)
         total_received_per_bank  = np.zeros(n)
         total_withdrawn_global   = 0.0
+
+        # Step metrics init
+        step_avg_belief = 0.0
+        step_run_fraction = 0.0
+        step_n_runs = 0
+        step_decisions = ["ROLL_OVER"] * n
 
         # 1. Identify currently active edges from our pool
         #    (We use the original indices 'rows', 'cols', but check current W)
@@ -843,12 +866,23 @@ def run_strategic_intraday_simulation(
 
             # 6. Execute Withdrawals
             withdraw_mask = U_run > U_stay
+
+            step_avg_belief = float(np.mean(p_defaults))
+            step_n_runs = int(np.sum(withdraw_mask))
+            step_run_fraction = float(step_n_runs / n_active) if n_active > 0 else 0.0
             
             if np.any(withdraw_mask):
                 w_rows = act_rows[withdraw_mask]
                 w_cols = act_cols[withdraw_mask]
                 w_amounts = act_exposures[withdraw_mask]
+                
+                # Record decisions (per-agent)
+                # If a bank withdraws on ANY link, we mark them as withdrawing in the visualization
+                unique_withdrawers = np.unique(w_rows)
+                for w_idx in unique_withdrawers:
+                    step_decisions[w_idx] = "WITHDRAW"
 
+                # 
                 # Update W (set to 0)
                 W[w_rows, w_cols] = 0.0
 
@@ -878,7 +912,13 @@ def run_strategic_intraday_simulation(
 
         # ── Fire-sale price impact ───────────────────────────────────────
         total_volume_norm = total_withdrawn_global / 1e12
+        
+        step_fire_loss = 0.0
         asset_price *= np.exp(-alpha * total_volume_norm)
+
+        if asset_price > 1e-9:
+             step_fire_loss = (total_withdrawn_global / asset_price) - total_withdrawn_global
+             current_cumulative_fire_sale_loss += step_fire_loss
 
         # ── Balance-sheet update (identical to original engine) ──────────
         for i in range(n):
@@ -926,7 +966,14 @@ def run_strategic_intraday_simulation(
         withdrawn_timeline.append(float(total_withdrawn_global))
         gridlock_timeline.append(failed)
         equity_loss_timeline.append(eq_loss)
+        decisions_timeline.append(step_decisions)
         margin_calls_timeline.append(float(margin_calls_total))
+        
+        avg_belief_timeline.append(step_avg_belief)
+        run_fraction_timeline.append(step_run_fraction)
+        n_runs_timeline.append(step_n_runs)
+        step_fire_sale_loss_timeline.append(step_fire_loss)
+        cumulative_fire_sale_loss_timeline.append(current_cumulative_fire_sale_loss)
 
     # ── Final status classification ──────────────────────────────────────
     initial_equity = state['equity'].copy()
@@ -942,14 +989,23 @@ def run_strategic_intraday_simulation(
     n_distressed = int((status == 'Distressed').sum())
     total_lost   = float(np.sum(np.maximum(initial_equity - final_equity, 0)))
 
+    # Compute scalars
+    final_run_rate = run_fraction_timeline[-1] if run_fraction_timeline else 0.0
+    final_fire_sale_loss = cumulative_fire_sale_loss_timeline[-1] if cumulative_fire_sale_loss_timeline else 0.0
+
+# Compute timeline steps array for convenience
+    steps_arr = list(range(1, n_steps + 1))
+
     results = {
         'trigger_idx':       trigger_idx,
         'trigger_name':      trigger_name,
         'loss_severity':     loss_severity,
+        'run_rate':          final_run_rate,
+        'total_fire_sale_loss': final_fire_sale_loss,
         'rust_engine':       False,
         'strategic_engine':  True,
         'info_regime':       info_regime,
-        'n_edge_agents':     len(edge_agents),
+        'n_edge_agents':     n_edges,
         'n_steps':           n_steps,
         'final_asset_price': asset_price,
         'n_defaults':        n_defaults,
@@ -959,6 +1015,7 @@ def run_strategic_intraday_simulation(
         'final_equity':      final_equity,
         'initial_equity':    initial_equity,
         'payments':          payments,
+        # Flat fields for general compatibility
         'price_timeline':        price_timeline,
         'defaults_timeline':     defaults_timeline,
         'distressed_timeline':   distressed_timeline,
@@ -966,15 +1023,37 @@ def run_strategic_intraday_simulation(
         'gridlock_timeline':     gridlock_timeline,
         'equity_loss_timeline':  equity_loss_timeline,
         'margin_calls_timeline': margin_calls_timeline,
+        'avg_belief_timeline': avg_belief_timeline,
+        'run_fraction_timeline': run_fraction_timeline,
+        'n_runs_timeline': n_runs_timeline,
+        'cumulative_fire_sale_loss_timeline': cumulative_fire_sale_loss_timeline,
         'systemic_credit_losses': systemic_credit_losses,
         'circuit_breaker_triggered': cb_triggered,
         'circuit_breaker_step':     cb_step,
+        # Nested timeline object for frontend Strategic Visualization
+        'timeline': {
+            'steps': steps_arr,
+            'decisions': decisions_timeline,
+            'price': price_timeline,
+            'defaults': defaults_timeline,
+            'distressed': distressed_timeline,
+            'withdrawn': withdrawn_timeline,
+            'gridlock': gridlock_timeline,
+            'equity_loss': equity_loss_timeline,
+            'margin_calls': margin_calls_timeline,
+            'avg_belief': avg_belief_timeline,
+            'run_fraction': run_fraction_timeline,
+            'n_runs': n_runs_timeline,
+            'cumulative_fire_sale_loss': cumulative_fire_sale_loss_timeline,
+            'step_fire_sale_loss': step_fire_sale_loss_timeline
+        },
+        'agent_names': df['bank_name'].tolist(),
     }
 
     print(f"\n  === RESULTS ===")
     print(f"  Engine:       Strategic Bayesian (Morris & Shin)")
     print(f"  Info regime:  {info_regime}")
-    print(f"  Edge agents:  {len(edge_agents)}")
+    print(f"  Edge agents:  {n_edges}")
     print(f"  Time Steps:   {n_steps}")
     print(f"  Final Price:  {asset_price:.4f}")
     print(f"  Defaults:     {n_defaults}")

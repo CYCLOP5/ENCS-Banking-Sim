@@ -16,6 +16,11 @@ async function request(url, options = {}) {
   return res.json();
 }
 
+const _cache = {
+  topology: null,
+  banks: null,
+};
+
 /* ── Health ─────────────────────────────────────────────────────── */
 
 export function fetchHealth() {
@@ -24,14 +29,20 @@ export function fetchHealth() {
 
 /* ── Topology (for 3D graph) ────────────────────────────────────── */
 
-export function fetchTopology() {
-  return request("/topology");
+export async function fetchTopology(forceRefresh = false) {
+  if (_cache.topology && !forceRefresh) return _cache.topology;
+  const data = await request("/topology");
+  _cache.topology = data;
+  return data;
 }
 
 /* ── Bank data (for explorer table) ─────────────────────────────── */
 
-export function fetchBanks() {
-  return request("/banks");
+export async function fetchBanks(forceRefresh = false) {
+  if (_cache.banks && !forceRefresh) return _cache.banks;
+  const data = await request("/banks");
+  _cache.banks = data;
+  return data;
 }
 
 /* ── Simulation (Eisenberg-Noe / Intraday) ──────────────────────── */
@@ -40,6 +51,7 @@ export function runSimulation(params = {}) {
   return request("/simulate", {
     method: "POST",
     body: JSON.stringify({
+      topology_type: params.topologyType ?? "smart",
       trigger_idx: params.triggerIdx ?? 0,
       severity: params.severity ?? 1.0,
       max_iter: params.maxIter ?? 100,

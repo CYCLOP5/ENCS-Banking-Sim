@@ -18,7 +18,9 @@ const links = [
   { to: "/methodology", label: "Methodology", icon: BookOpen },
   { to: "/implementation", label: "Architecture", icon: Layers },
   { to: "/simulation", label: "Simulation", icon: Network },
+  { to: "/benchmarking", label: "Benchmarking", icon: Activity },
   { to: "/banks", label: "Banks", icon: Database },
+  { to: "/how-to-use", label: "How to Use", icon: BookOpen },
   { to: "/terminology", label: "Glossary", icon: GraduationCap },
 ];
 
@@ -44,16 +46,18 @@ export default function Navbar() {
     >
       <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
         {/* Logo */}
-        <Link to="/" className="flex items-center gap-2.5 group">
-          <div className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-crisis-red/10 border border-crisis-red/20 group-hover:glow-red transition-shadow">
-            <Activity className="h-4 w-4 text-crisis-red" />
+        <Link to="/" className="flex items-center gap-3 group">
+          <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-crisis-red/10 border border-crisis-red/20 group-hover:glow-red transition-shadow">
+            <Activity className="h-5 w-5 text-crisis-red" />
           </div>
-          <span className="font-[family-name:var(--font-display)] text-lg font-bold tracking-tight">
-            <span className="text-crisis-red">ENCS</span>
-            <span className="text-text-secondary font-normal ml-1.5 text-sm hidden sm:inline">
+          <div className="flex flex-col">
+            <span className="font-[family-name:var(--font-display)] text-lg font-bold tracking-tight text-white leading-none group-hover:text-crisis-red transition-colors">
+              ENCS
+            </span>
+            <span className="text-text-secondary font-medium text-[10px] uppercase tracking-wider leading-none mt-1">
               Systemic Risk Engine
             </span>
-          </span>
+          </div>
         </Link>
 
         {/* Desktop links */}
@@ -65,7 +69,7 @@ export default function Navbar() {
                 key={to}
                 to={to}
                 className={cn(
-                  "relative flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200",
+                  "relative flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 whitespace-nowrap",
                   active
                     ? "text-white"
                     : "text-text-secondary hover:text-text-primary hover:bg-surface-hover"
@@ -85,14 +89,7 @@ export default function Navbar() {
           })}
         </div>
 
-        {/* Status beacon */}
-        <div className="hidden md:flex items-center gap-2 text-xs text-text-muted font-[family-name:var(--font-mono)]">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-stability-green opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-stability-green" />
-          </span>
-          LIVE
-        </div>
+
 
         {/* Mobile toggle */}
         <button
@@ -119,7 +116,7 @@ export default function Navbar() {
                   to={to}
                   onClick={() => setMobileOpen(false)}
                   className={cn(
-                    "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors",
+                    "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
                     pathname === to
                       ? "bg-surface text-white"
                       : "text-text-secondary hover:text-white hover:bg-surface-hover"

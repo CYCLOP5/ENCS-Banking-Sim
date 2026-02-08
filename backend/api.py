@@ -130,9 +130,31 @@ def _load_network():
     return _cache["W_dense"], _cache["df"]
 
 
+def _generate_max_entropy_topology(df: pd.DataFrame, target_total_weight: float) -> np.ndarray:
+    """Generates a Max Entropy (Uniform) topology with the same total volume."""
+    n = len(df)
+    # Uniform weight for every off-diagonal entry
+    # Total edges = n * (n - 1)
+    if n <= 1:
+        return np.zeros((n, n))
+    
+    num_edges = n * (n - 1)
+    # If target_total_weight is 0, we just return zeros.
+    if target_total_weight <= 0:
+        return np.zeros((n, n))
+        
+    avg_weight = target_total_weight / num_edges
+    
+    W_uniform = np.full((n, n), avg_weight)
+    np.fill_diagonal(W_uniform, 0.0)
+    
+    return W_uniform
+
+
 # ── Request / Response schemas ────────────────────────────────────────────
 
 class SimulationRequest(BaseModel):
+    topology_type: str = Field("smart", pattern="^(smart|uniform)$")
     trigger_idx: int = 0
     severity: float = Field(1.0, ge=0, le=1)
     max_iter: int = Field(100, ge=10, le=500)
@@ -149,9 +171,13 @@ class SimulationRequest(BaseModel):
     use_strategic: bool = False
     strategic_interest_rate: float = Field(0.05, ge=0.01, le=0.20)
     strategic_recovery_rate: float = Field(0.40, ge=0.10, le=0.80)
-    strategic_risk_aversion: float = Field(1.0, ge=0.1, le=3.0)
+    strategic_risk_aversion: float = Field(1.0, ge=0.1, le=10.0)
     strategic_info_regime: str = Field("OPAQUE")  # "OPAQUE" or "TRANSPARENT"
     strategic_alpha: float = Field(5.0, ge=0.01, le=100.0)  # Public signal precision
+    strategic_noise_std: float = Field(0.05, ge=0.01, le=2.0)
+    strategic_haircut: float = Field(0.20, ge=0.01, le=1.0)
+    strategic_margin_pressure: float = Field(0.5, ge=0.0, le=5.0)
+    strategic_exposure_scale: float = Field(1.0, ge=0.1, le=100.0) # Target exposure in $B
     # Circuit breaker
     circuit_breaker_enabled: bool = False
     circuit_breaker_threshold: float = Field(0.15, ge=0.01, le=0.50)
@@ -163,7 +189,7 @@ class SimulationRequest(BaseModel):
 
 class ClimateRequest(BaseModel):
     carbon_tax: float = Field(0.5, ge=0, le=1)
-    green_subsidy: float = Field(0.10, ge=0, le=0.50)
+    green_subsidy: float = Field(0.10, ge=0, le=1.0)
     use_intraday: bool = True
     trigger_idx: int = 0
     severity: float = Field(1.0, ge=0, le=1)
@@ -459,8 +485,12 @@ async def get_banks():
         W_dense, df = _load_network()
 
         # Enrich with climate data
-        df_enriched = df.copy()
-        assign_climate_exposure(df_enriched)
+        if "climate_df_enriched" not in _cache:
+            df_enr = df.copy()
+            assign_climate_exposure(df_enr)
+            _cache["climate_df_enriched"] = df_enr
+        
+        df_enriched = _cache["climate_df_enriched"].copy()
 
         # GNN risk scores
         risk_scores = np.zeros(len(df_enriched))
@@ -508,6 +538,31 @@ async def run_simulation(req: SimulationRequest):
     try:
         W_dense, df = _load_network()
 
+        # Strategic Exposure Scaling
+        if req.use_strategic and req.strategic_exposure_scale != 1.0:
+            # req.strategic_exposure_scale is a dollar amount in Billions.
+            # We want the AVERAGE interbank exposure to equal this request.
+            # Current Average:
+            current_avg_exposure = W_dense.sum(axis=1).mean() # Average liability per bank
+            if current_avg_exposure > 0:
+                target_exposure = req.strategic_exposure_scale * 1e9 # Convert B to absolute
+                scale_factor = target_exposure / current_avg_exposure
+                W_dense *= scale_factor
+                # Also scale the interbank assets/liabs in DF to match, otherwise consistency checks fail?
+                # Actually, compute_state_variables derives obligations strictly from W_dense.
+                # But it derives 'total_assets' from DF.
+                # If we scale W up 10x, 'interbank_claims' go up 10x.
+                # 'external_assets' = total_assets - interbank_claims.
+                # If interbank_claims > total_assets, external_assets = 0.
+                # This simulates "leveraging up" the interbank book.
+                # To be chemically correct, we should arguably increase total_assets too?
+                # For now, let's just scale W and let the math flow.
+                # If exposure is huge, external assets will drain, making banks fragile. Correct.
+
+        if req.topology_type == "uniform":
+            total_volume = W_dense.sum()
+            W_dense = _generate_max_entropy_topology(df, total_volume)
+
         # Optional CCP
         if req.use_ccp:
             W_dense, df = sim.apply_central_clearing(
@@ -518,16 +573,17 @@ async def run_simulation(req: SimulationRequest):
 
         state = sim.compute_state_variables(W_dense, df)
 
-        if req.use_intraday and req.use_strategic:
-            # Strategic Bayesian engine — per-edge Morris & Shin agents
-            results = sim.run_strategic_intraday_simulation(
-                state, df,
+        # ── STRATEGIC A/B TESTING (Game/Strategic Mode) ───────────────────
+        if req.use_strategic:
+            # 1. Run OPAQUE simulation (Private signals only)
+            opaque_result = sim.run_strategic_intraday_simulation(
+                state, df.copy(),
                 trigger_idx=req.trigger_idx,
                 loss_severity=req.severity,
                 n_steps=req.n_steps,
-                uncertainty_sigma=req.sigma,
-                alpha=req.fire_sale_alpha,
-                margin_sensitivity=req.margin_multiplier,
+                uncertainty_sigma=req.strategic_noise_std, # Use explicit noise
+                alpha=req.strategic_haircut,               # Map Haircut -> Alpha (Fire sale decay)
+                margin_sensitivity=req.strategic_margin_pressure,
                 max_iterations=req.max_iter,
                 convergence_threshold=req.tolerance,
                 distress_threshold=req.distress_threshold,
@@ -535,10 +591,64 @@ async def run_simulation(req: SimulationRequest):
                 interest_rate=req.strategic_interest_rate,
                 recovery_rate=req.strategic_recovery_rate,
                 risk_aversion_mean=req.strategic_risk_aversion,
-                info_regime=req.strategic_info_regime,
-                public_precision=req.strategic_alpha,
+                info_regime="OPAQUE",
+                public_precision=None  # Default logic applies for OPAQUE
             )
-        elif req.use_intraday:
+            opaque_result["bank_names"] = df["bank_name"].tolist()
+
+            # 2. Run TRANSPARENT simulation (High-precision public signal)
+            # Use req.strategic_alpha for public_precision
+            transparent_result = sim.run_strategic_intraday_simulation(
+                state, df.copy(),
+                trigger_idx=req.trigger_idx,
+                loss_severity=req.severity,
+                n_steps=req.n_steps,
+                uncertainty_sigma=req.strategic_noise_std, # Use explicit noise
+                alpha=req.strategic_haircut,               # Map Haircut -> Alpha
+                margin_sensitivity=req.strategic_margin_pressure,
+                max_iterations=req.max_iter,
+                convergence_threshold=req.tolerance,
+                distress_threshold=req.distress_threshold,
+                circuit_breaker_threshold=req.circuit_breaker_threshold if req.circuit_breaker_enabled else 0.0,
+                interest_rate=req.strategic_interest_rate,
+                recovery_rate=req.strategic_recovery_rate,
+                risk_aversion_mean=req.strategic_risk_aversion,
+                info_regime="TRANSPARENT",
+                public_precision=req.strategic_alpha
+            )
+            transparent_result["bank_names"] = df["bank_name"].tolist()
+
+            # 3. Calculate capital saved
+            # (Opaque Loss) - (Transparent Loss)
+            capital_saved = opaque_result.get('equity_loss', 0.0) - transparent_result.get('equity_loss', 0.0)
+
+            # 4. Construct response
+            run_id = str(uuid.uuid4())
+            
+            result_data = {
+                "opaque": _clean_results(opaque_result),
+                "transparent": _clean_results(transparent_result),
+                "capital_saved": float(capital_saved),
+                "run_id": run_id
+            }
+
+            try:
+                summary = build_run_summary("game", result_data)
+                _llm_store.save_run(
+                    run_id=run_id,
+                    run_type="game",
+                    request_json=req.model_dump(),
+                    result_json=result_data,
+                    bank_snapshot_json={"banks": _build_bank_snapshot(df)},
+                    summary_json=summary,
+                )
+            except Exception:
+                logger.exception("Failed to store strategic run")
+
+            return result_data
+
+        # ── MECHANICAL / STANDARD INTRADAY ───────────────────────────────
+        if req.use_intraday:
             results = sim.run_rust_intraday(
                 state, df,
                 trigger_idx=req.trigger_idx,

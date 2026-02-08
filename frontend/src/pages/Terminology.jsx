@@ -41,15 +41,15 @@ function Tex({ children, display = false }) {
 
 // ── Color palette per category ──────────────────────────────────
 const CATEGORY_STYLE = {
-  Physics:     { accent: "text-crisis-red",      border: "border-crisis-red/20",      bg: "bg-crisis-red/5",      glow: "red"   },
-  "Market Risk": { accent: "text-crisis-red",    border: "border-crisis-red/20",      bg: "bg-crisis-red/5",      glow: "red"   },
-  Status:      { accent: "text-stability-green",  border: "border-stability-green/20", bg: "bg-stability-green/5", glow: "green" },
-  Topology:    { accent: "text-stability-green",  border: "border-stability-green/20", bg: "bg-stability-green/5", glow: "green" },
-  AI:          { accent: "text-data-blue",         border: "border-data-blue/20",       bg: "bg-data-blue/5",       glow: "blue"  },
-  "Game Theory": { accent: "text-neon-purple",    border: "border-neon-purple/20",     bg: "bg-neon-purple/5",     glow: null    },
-  Climate:     { accent: "text-stability-green",  border: "border-stability-green/20", bg: "bg-stability-green/5", glow: "green" },
-  Risk:        { accent: "text-crisis-red",       border: "border-crisis-red/20",      bg: "bg-crisis-red/5",      glow: "red"   },
-  Regulation:  { accent: "text-data-blue",        border: "border-data-blue/20",       bg: "bg-data-blue/5",       glow: "blue"  },
+  Physics: { accent: "text-crisis-red", border: "border-crisis-red/20", bg: "bg-crisis-red/5", glow: "red" },
+  "Market Risk": { accent: "text-crisis-red", border: "border-crisis-red/20", bg: "bg-crisis-red/5", glow: "red" },
+  Status: { accent: "text-stability-green", border: "border-stability-green/20", bg: "bg-stability-green/5", glow: "green" },
+  Topology: { accent: "text-stability-green", border: "border-stability-green/20", bg: "bg-stability-green/5", glow: "green" },
+  AI: { accent: "text-data-blue", border: "border-data-blue/20", bg: "bg-data-blue/5", glow: "blue" },
+  "Game Theory": { accent: "text-neon-purple", border: "border-neon-purple/20", bg: "bg-neon-purple/5", glow: null },
+  Climate: { accent: "text-stability-green", border: "border-stability-green/20", bg: "bg-stability-green/5", glow: "green" },
+  Risk: { accent: "text-crisis-red", border: "border-crisis-red/20", bg: "bg-crisis-red/5", glow: "red" },
+  Regulation: { accent: "text-data-blue", border: "border-data-blue/20", bg: "bg-data-blue/5", glow: "blue" },
 };
 
 // ── Term Definitions ────────────────────────────────────────────
@@ -75,6 +75,28 @@ const TERMS = [
     technical:
       "Asset price decays exponentially based on sold volume. This creates a non-linear positive feedback loop where mark-to-market losses trigger further liquidations.",
     math: "P_{t+1} = P_t \\cdot e^{-\\alpha \\cdot V_t / 10^{12}}",
+  },
+  {
+    id: "opaque-regime",
+    title: "Opaque Regime",
+    category: "Game Theory",
+    icon: Users,
+    simple:
+      "A 'Fog of War' market where investors can't see the true health of banks. They rely on rumors (noisy signals). This can sometimes hide insolvency (ignorance is bliss) but often causes panic runs on healthy banks.",
+    technical:
+      "A Bayesian game setting where agents receive private signals s_i = θ + ε with high variance. Coordination failures occur when agents rationally infer that others will withdraw, even if the fundamental θ is sound.",
+    math: "s_i \\sim \\mathcal{N}(\\theta, \\sigma^2_{\\text{noise}})",
+  },
+  {
+    id: "transparent-regime",
+    title: "Transparent Regime",
+    category: "Game Theory",
+    icon: CloudLightning,
+    simple:
+      "A market where an AI regulator reveals the exact truth about every bank. This saves healthy banks from panic (no more rumors), but instantly kills insolvent banks by revealing they are broke.",
+    technical:
+      "The limit case as public signal precision α → ∞. This aligns beliefs around the fundamental θ. While it eliminates Type II errors (runs on solvent banks), it eliminates the 'constructive ambiguity' that might allow insolvent banks to survive or restructure.",
+    math: "\\alpha \\to \\infty \\implies \\text{Common Knowledge of } \\theta",
   },
   {
     id: "status",
@@ -428,11 +450,10 @@ export default function Terminology() {
       >
         <button
           onClick={() => setSearch("")}
-          className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-            !search
-              ? "border-stability-green/40 bg-stability-green/10 text-stability-green"
-              : "border-white/10 bg-white/[0.03] text-text-muted hover:border-white/20"
-          }`}
+          className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${!search
+            ? "border-stability-green/40 bg-stability-green/10 text-stability-green"
+            : "border-white/10 bg-white/[0.03] text-text-muted hover:border-white/20"
+            }`}
         >
           All
         </button>
@@ -443,11 +464,10 @@ export default function Terminology() {
             <button
               key={cat}
               onClick={() => setSearch(active ? "" : cat)}
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                active
-                  ? `${style.border} ${style.bg} ${style.accent}`
-                  : "border-white/10 bg-white/[0.03] text-text-muted hover:border-white/20"
-              }`}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${active
+                ? `${style.border} ${style.bg} ${style.accent}`
+                : "border-white/10 bg-white/[0.03] text-text-muted hover:border-white/20"
+                }`}
             >
               {cat}
             </button>
@@ -472,9 +492,8 @@ export default function Terminology() {
                 transition={{ duration: 0.25, delay: i * 0.02 }}
               >
                 <GlassPanel
-                  className={`cursor-pointer transition-all duration-300 hover:border-white/15 ${
-                    isExpanded ? `${style.border} border` : ""
-                  }`}
+                  className={`cursor-pointer transition-all duration-300 hover:border-white/15 ${isExpanded ? `${style.border} border` : ""
+                    }`}
                   glow={isExpanded ? style.glow : undefined}
                   onClick={() => setExpandedId(isExpanded ? null : term.id)}
                 >

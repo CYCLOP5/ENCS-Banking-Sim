@@ -97,6 +97,65 @@ function Slider({ label, value, onChange, min, max, step = 0.01, suffix = "", de
   );
 }
 
+/* ── Custom Select Component ───────────────────────────────────── */
+function CustomSelect({ value, onChange, options, placeholder = "Select..." }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (ref.current && !ref.current.contains(event.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedLabel = options.find((o) => o.value === value)?.label || placeholder;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between pl-3 pr-3 py-2 rounded-lg bg-white/[0.04] border border-border text-xs text-text-primary font-[family-name:var(--font-mono)] hover:bg-white/[0.08] transition-colors focus:outline-none focus:border-stability-green/40"
+      >
+        <span className="truncate">{selectedLabel}</span>
+        <ChevronRight className={cn("w-3.5 h-3.5 text-text-muted transition-transform", open ? "-rotate-90" : "rotate-90")} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -5 }}
+            className="absolute top-full left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-lg bg-[#0B0B15] border border-border shadow-xl z-50 py-1"
+          >
+            {options.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "w-full text-left px-3 py-2 text-xs font-[family-name:var(--font-mono)] transition-colors",
+                  option.value === value
+                    ? "bg-stability-green/10 text-stability-green"
+                    : "text-text-secondary hover:bg-white/[0.04] hover:text-text-primary"
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ── Toggle Switch ─────────────────────────────────────────────── */
 function Toggle({ label, checked, onChange, description }) {
   return (
@@ -151,9 +210,8 @@ function DefaultTicker({ defaults = [], distressed = [] }) {
             key={i}
             className="inline-flex items-center gap-1.5 text-xs font-[family-name:var(--font-mono)]"
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${
-              item.type === 'distressed' ? 'bg-orange-500' : 'bg-crisis-red'
-            }`} />
+            <span className={`h-1.5 w-1.5 rounded-full ${item.type === 'distressed' ? 'bg-orange-500' : 'bg-crisis-red'
+              }`} />
             <span className={item.type === 'distressed' ? 'text-orange-500' : 'text-crisis-red'}>
               {item.name}
             </span>
@@ -195,14 +253,137 @@ const SCENARIOS = {
   "RESILIENT_DEMO": {
     label: "Resilient System (Demo)",
     description: "Strong CCP buffer & lower fire-sale impact prevents total collapse",
-    params: { 
-      severity: 0.40, 
-      panicRate: 0.05, 
-      sigma: 0.05, 
-      fireSaleAlpha: 0.001, 
-      defaultFundRatio: 0.15, 
-      useCcp: true, 
-      useIntraday: true 
+    params: {
+      severity: 0.40,
+      panicRate: 0.05,
+      sigma: 0.05,
+      fireSaleAlpha: 0.001,
+      defaultFundRatio: 0.15,
+      useCcp: true,
+      useIntraday: true
+    }
+  }
+};
+
+/* ── Scenario Presets for Climate Simulation ── */
+const CLIMATE_SCENARIOS = {
+  "PARIS_AGREEMENT": {
+    label: "Paris Agreement Alignment",
+    description: "Ordered transition with high carbon tax but strong green subsidies",
+    params: { carbonTax: 0.8, greenSubsidy: 0.4, severity: 0.2, nSteps: 20, useIntraday: true }
+  },
+  "DISORDERLY_TRANSITION": {
+    label: "Disorderly Transition",
+    description: "Sudden policy shifts, high taxes, low subsidies, causing fire sales",
+    params: { carbonTax: 0.9, greenSubsidy: 0.05, severity: 0.6, nSteps: 15, useIntraday: true }
+  },
+  "HOT_HOUSE_WORLD": {
+    label: "Hot House World (Physical Risk)",
+    description: "Failed transition leading to severe physical asset shocks",
+    params: { carbonTax: 0.1, greenSubsidy: 0.0, severity: 0.8, nSteps: 25, useIntraday: true }
+  },
+  "TECH_BREAKTHROUGH": {
+    label: "Tech Breakthrough",
+    description: "Rapid innovation makes green assets boom; moderate tax required.",
+    params: { carbonTax: 0.3, greenSubsidy: 0.8, severity: 0.1, nSteps: 15, useIntraday: true }
+  },
+  "DELAYED_REACTION": {
+    label: "Delayed Reaction",
+    description: "Ignoring risks until too late, then panic regulation (extreme tax).",
+    params: { carbonTax: 0.95, greenSubsidy: 0.0, severity: 0.9, nSteps: 10, useIntraday: true }
+  }
+};
+
+/* ── Scenario Presets for Strategic Simulation ── */
+const STRATEGIC_SCENARIOS = {
+  "COORDINATION_FAILURE": {
+    label: "Coordination Failure",
+    description: "Fragile fundamentals + opaque info lead to self-fulfilling runs",
+    params: {
+      gameSolvency: 0.15,
+      gameRiskAversion: 2.0,
+      gameAlpha: 1.0, // Low transparency
+      gameNoiseStd: 0.2, // High private noise
+      gameHaircut: 0.4,
+      gameInterestRate: 0.10,
+      gameRecoveryRate: 0.40,
+      gameExposure: 1.0,
+      gameMarginPressure: 0.30
+    }
+  },
+  "TRANSPARENCY_SUCCESS": {
+    label: "Transparency Success",
+    description: "AI signal prevents runs despite weak fundamentals",
+    params: {
+      gameSolvency: 0.18,
+      gameRiskAversion: 1.2,
+      gameAlpha: 8.0, // High transparency
+      gameNoiseStd: 0.1,
+      gameHaircut: 0.25,
+      gameInterestRate: 0.08,
+      gameRecoveryRate: 0.45,
+      gameExposure: 1.2,
+      gameMarginPressure: 0.20
+    }
+  },
+  "FUNDAMENTAL_INSOLVENCY": {
+    label: "Fundamental Insolvency",
+    description: "Banks are truly insolvent; runs are rational and unavoidable",
+    params: {
+      gameSolvency: -0.05, // Negative equity
+      gameRiskAversion: 1.0,
+      gameAlpha: 5.0,
+      gameNoiseStd: 0.05,
+      gameHaircut: 0.3,
+      gameInterestRate: 0.12,
+      gameRecoveryRate: 0.30,
+      gameExposure: 1.0,
+      gameMarginPressure: 0.40
+    }
+  },
+  "RATIONAL_PANIC": {
+    label: "Rational Panic",
+    description: "High transparency reveals slight insolvency, causing immediate valid runs.",
+    params: {
+      gameSolvency: -0.02,
+      gameRiskAversion: 1.5,
+      gameAlpha: 10.0, // Very high transparency -> truth revealed
+      gameNoiseStd: 0.05,
+      gameHaircut: 0.3,
+      gameInterestRate: 0.10,
+      gameRecoveryRate: 0.35,
+      gameExposure: 1.0,
+      gameMarginPressure: 0.30
+    }
+  },
+  "NOISY_CONFUSION": {
+    label: "Noisy Confusion",
+    description: "High noise & fear cause runs even on solvent banks (coordination failure).",
+    params: {
+      gameSolvency: 0.15, // Actually solvent
+      gameRiskAversion: 2.5, // Very fearful
+      gameAlpha: 0.5, // Extremely opaque/noisy public signal
+      gameNoiseStd: 0.4, // High private noise
+      gameHaircut: 0.5, // High penalty for staying
+      gameInterestRate: 0.15,
+      gameRecoveryRate: 0.20, // Very low recovery fear
+      gameExposure: 0.8,
+      gameMarginPressure: 0.50
+    }
+  },
+  "POSITIVE_DIVIDEND": {
+    label: "Positive Dividend (Wait for it)",
+    description: "High noise causes panic on solvent banks (Opaque), but AI clarity saves them (Transparent).",
+    params: {
+      gameSolvency: 0.12, // Clearly solvent (if you know the truth)
+      gameRiskAversion: 4.0, // Extremely paranoid investors
+      gameAlpha: 10.0, // Crystal clear AI signal
+      gameNoiseStd: 0.8, // Total chaos in the opaque world
+      gameHaircut: 0.3,
+      gameInterestRate: 0.04, // Low interest rate to help solvency
+      gameRecoveryRate: 0.25, // Low recovery rate adds to fear
+      gameExposure: 7.0, // High exposure amplifies the stakes
+      gameMarginPressure: 0.30
     }
   }
 };
@@ -279,11 +460,16 @@ export default function Simulation() {
   const [gameMarginPressure, setGameMarginPressure] = useState(0.30);
   const [gameExposure, setGameExposure] = useState(1.0);
   const [gameAlpha, setGameAlpha] = useState(5.0); // Public Signal Precision
+  const [selectedScenario, setSelectedScenario] = useState("");
 
   /* ── Apply Scenario Preset ── */
   const applyScenario = (key) => {
-    const s = SCENARIOS[key];
+    setSelectedScenario(key);
+    // Check all scenario dictionaries
+    const s = SCENARIOS[key] || CLIMATE_SCENARIOS[key] || STRATEGIC_SCENARIOS[key];
     if (!s) return;
+
+    // Mechanical
     if (s.params.severity !== undefined) setSeverity(s.params.severity);
     if (s.params.panicRate !== undefined) setPanicRate(s.params.panicRate);
     if (s.params.sigma !== undefined) setSigma(s.params.sigma);
@@ -294,7 +480,23 @@ export default function Simulation() {
     if (s.params.useCcp !== undefined) setUseCcp(s.params.useCcp);
     if (s.params.clearingRate !== undefined) setClearingRate(s.params.clearingRate);
     if (s.params.defaultFundRatio !== undefined) setDefaultFundRatio(s.params.defaultFundRatio);
+
+    // Climate
+    if (s.params.carbonTax !== undefined) setCarbonTax(s.params.carbonTax);
+    if (s.params.greenSubsidy !== undefined) setGreenSubsidy(s.params.greenSubsidy);
+
+    // Strategic
+    if (s.params.gameSolvency !== undefined) setGameSolvency(s.params.gameSolvency);
+    if (s.params.gameRiskAversion !== undefined) setGameRiskAversion(s.params.gameRiskAversion);
+    if (s.params.gameAlpha !== undefined) setGameAlpha(s.params.gameAlpha);
+    if (s.params.gameNoiseStd !== undefined) setGameNoiseStd(s.params.gameNoiseStd);
+    if (s.params.gameHaircut !== undefined) setGameHaircut(s.params.gameHaircut);
+    if (s.params.gameInterestRate !== undefined) setGameInterestRate(s.params.gameInterestRate);
+    if (s.params.gameRecoveryRate !== undefined) setGameRecoveryRate(s.params.gameRecoveryRate);
+    if (s.params.gameExposure !== undefined) setGameExposure(s.params.gameExposure);
+    if (s.params.gameMarginPressure !== undefined) setGameMarginPressure(s.params.gameMarginPressure);
   };
+
 
   // ── Load topology + bank list ──
   useEffect(() => {
@@ -304,7 +506,7 @@ export default function Simulation() {
       .finally(() => setLoading(false));
     fetchBanks()
       .then((data) => setBankList(data.banks || []))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // ── Resize observer (debounced to avoid re-renders on every frame) ──
@@ -440,10 +642,11 @@ export default function Simulation() {
         gamePlaybackTimerRef.current = null;
         // Zoom out after finishing
         if (graphRef.current) graphRef.current.zoomToFit(2000);
-        setTimeout(() => {
-          setGamePlaybackActive(false);
-          setGameFlippedSet(null);
-        }, 3000);
+        // User requested to keep state visible
+        // setTimeout(() => {
+        //   setGamePlaybackActive(false);
+        //   setGameFlippedSet(null);
+        // }, 3000);
         return;
       }
 
@@ -460,8 +663,6 @@ export default function Simulation() {
         if (withdrawIds.length > 0) {
           graphRef.current.focusNode(withdrawIds[0], 200 + stepIdx * 20);
         }
-      } else if (graphRef.current && stepIdx === 10) {
-        graphRef.current.zoomToFit(1500);
       }
 
       stepIdx++;
@@ -470,11 +671,31 @@ export default function Simulation() {
 
   // Auto-start game playback when strategic results arrive
   useEffect(() => {
-    if (tab === "strategic" && results?.opaque) startGamePlayback();
+    // Only auto-start if we haven't already finished or if results changed
+    if (tab === "strategic" && results?.opaque) {
+      // If we already have a status map, don't restart (persistence)
+      // unless it's a fresh run
+      if (!gameStatusMap || Object.keys(gameStatusMap).length === 0) {
+        startGamePlayback();
+      }
+    }
     return () => {
       if (gamePlaybackTimerRef.current) clearInterval(gamePlaybackTimerRef.current);
     };
   }, [results, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear game state ONLY when switching tabs (persistence)
+  useEffect(() => {
+    if (tab !== "strategic") {
+      setGameStatusMap({});
+      setGameFlippedSet(null);
+      setGamePlaybackActive(false);
+      if (gamePlaybackTimerRef.current) {
+        clearInterval(gamePlaybackTimerRef.current);
+        gamePlaybackTimerRef.current = null;
+      }
+    }
+  }, [tab]);
 
   // Restart playback when regime toggle changes
   useEffect(() => {
@@ -482,6 +703,11 @@ export default function Simulation() {
       startGamePlayback();
     }
   }, [gameRegime]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear selected scenario when switching tabs
+  useEffect(() => {
+    setSelectedScenario("");
+  }, [tab]);
 
   // ── BFS contagion animation ──
   const startContagion = useCallback(() => {
@@ -606,10 +832,11 @@ export default function Simulation() {
         contagionTimerRef.current = null;
         // Zoom out to see everything
         if (graphRef.current) graphRef.current.zoomToFit(2000);
-        setTimeout(() => {
-          setContagionActive(false);
-          setContagionLinks(null);
-        }, 3000);
+        // User requested to keep state visible
+        // setTimeout(() => {
+        //   setContagionActive(false);
+        //   setContagionLinks(null);
+        // }, 3000);
         return;
       }
 
@@ -664,6 +891,10 @@ export default function Simulation() {
           strategicRiskAversion: gameRiskAversion,
           strategicInterestRate: gameInterestRate,
           strategicRecoveryRate: gameRecoveryRate,
+          strategicNoiseStd: gameNoiseStd,
+          strategicHaircut: gameHaircut,
+          strategicMarginPressure: gameMarginPressure,
+          strategicExposure_scale: gameExposure,
           nSteps: gameNSteps,
           triggerIdx,
           useIntraday: true,
@@ -710,13 +941,17 @@ export default function Simulation() {
   ]);
 
   // ── Timeline chart data ──
+  const activeResults = tab === "strategic" ? results?.opaque : results;
   const timelineData =
-    results?.equity_loss_timeline?.map((val, i) => ({
+    activeResults?.equity_loss_timeline?.map((val, i) => ({
       step: i,
       loss: val / 1e9,
-      defaults: results.defaults_timeline?.[i] ?? 0,
-      price: results.price_timeline?.[i] ?? 1,
-      gridlock: results.gridlock_timeline?.[i] ?? 0,
+      defaults: activeResults.defaults_timeline?.[i] ?? 0,
+      price: activeResults.price_timeline?.[i] ?? 1,
+      gridlock: activeResults.gridlock_timeline?.[i] ?? 0,
+      margin: activeResults.margin_calls_timeline?.[i] ? activeResults.margin_calls_timeline[i] / 1e6 : 0, // Millions
+      belief: activeResults.avg_belief_timeline?.[i] ?? 0,
+      runRate: activeResults.run_fraction_timeline?.[i] ?? 0,
     })) ?? [];
 
   // ── Defaulted & distressed bank names ──
@@ -760,7 +995,7 @@ export default function Simulation() {
             onNodeClick={(node) => {
               setSelectedNode(node);
               if (graphRef.current && node) {
-                 graphRef.current.focusNode(node.id, 100);
+                graphRef.current.focusNode(node.id, 100);
               }
             }}
             onBackgroundClick={() => setSelectedNode(null)}
@@ -808,8 +1043,8 @@ export default function Simulation() {
               {tab === "mechanical"
                 ? "Shock Parameters"
                 : tab === "climate"
-                ? "Climate Scenario"
-                : "Game Theory"}
+                  ? "Climate Scenario"
+                  : "Game Theory"}
             </span>
           </div>
 
@@ -1058,6 +1293,25 @@ export default function Simulation() {
                 exit={{ opacity: 0, x: 10 }}
                 className="space-y-4"
               >
+                {/* Climate Scenario Selector */}
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    <CloudLightning className="w-3 h-3" />
+                    Climate Scenarios
+                  </span>
+                  <CustomSelect
+                    value={selectedScenario}
+                    onChange={(val) => applyScenario(val)}
+                    options={Object.entries(CLIMATE_SCENARIOS).map(([key, s]) => ({
+                      value: key,
+                      label: s.label
+                    }))}
+                    placeholder="Select a scenario..."
+                  />
+                </div>
+
+                <div className="border-t border-border" />
+
                 <Slider
                   label="Carbon Tax Severity"
                   value={carbonTax}
@@ -1097,6 +1351,10 @@ export default function Simulation() {
                       step={1}
                       description="Multi-step cascade after transition shock"
                     />
+
+
+                    <div className="border-t border-border" />
+
                     <Slider
                       label="Shock Severity"
                       value={severity}
@@ -1125,6 +1383,25 @@ export default function Simulation() {
                 exit={{ opacity: 0, x: 10 }}
                 className="space-y-4"
               >
+                {/* Strategic Scenario Selector */}
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    <History className="w-3 h-3" />
+                    Strategic Scenarios
+                  </span>
+                  <CustomSelect
+                    value={selectedScenario}
+                    onChange={(val) => applyScenario(val)}
+                    options={Object.entries(STRATEGIC_SCENARIOS).map(([key, s]) => ({
+                      value: key,
+                      label: s.label
+                    }))}
+                    placeholder="Select a preset..."
+                  />
+                </div>
+
+                <div className="border-t border-border" />
+
                 <Slider
                   label="True Solvency (θ)"
                   value={gameSolvency}
@@ -1242,7 +1519,7 @@ export default function Simulation() {
                 </div>
 
                 <div className="glass rounded-lg p-3 text-[11px] text-text-muted">
-                  <span className="text-neon-purple font-bold">Insight:</span>{" "}
+                  <span className="text-data-blue font-bold">Insight:</span>{" "}
                   Compares OPAQUE vs TRANSPARENT regimes side-by-side.
                   Transparent regime uses GNN risk-frequency scores as public signal to
                   prevent coordination failures.
@@ -1259,7 +1536,7 @@ export default function Simulation() {
               "w-full flex items-center justify-center gap-2.5 rounded-xl py-3.5 text-sm font-bold transition-all",
               simulating
                 ? "bg-white/5 text-text-muted cursor-not-allowed"
-                : "bg-gradient-to-r from-crisis-red to-neon-purple text-white shadow-lg shadow-crisis-red/20 hover:shadow-crisis-red/40 hover:scale-[1.02] active:scale-[0.98]"
+                : "bg-gradient-to-r from-data-blue to-stability-green text-void-void shadow-lg shadow-stability-green/20 hover:shadow-stability-green/40 hover:scale-[1.02] active:scale-[0.98]"
             )}
           >
             {simulating ? (
@@ -1286,7 +1563,7 @@ export default function Simulation() {
 
       {/* ── Bottom Metrics Bar ──────────────────────── */}
       <AnimatePresence>
-        {results && tab !== "strategic" && (
+        {results && (
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
@@ -1307,8 +1584,8 @@ export default function Simulation() {
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
                   <MetricCard
                     label="Defaults"
-                    value={results.n_defaults ?? 0}
-                    delta={results.n_defaults - (prevResults?.n_defaults ?? results.n_defaults)}
+                    value={activeResults?.n_defaults ?? 0}
+                    delta={(activeResults?.n_defaults ?? 0) - (prevResults?.n_defaults ?? activeResults?.n_defaults ?? 0)}
                     reversed={true}
                     prefix=""
                     suffix=""
@@ -1316,8 +1593,8 @@ export default function Simulation() {
                   />
                   <MetricCard
                     label="Distressed"
-                    value={results.n_distressed ?? 0}
-                    delta={results.n_distressed - (prevResults?.n_distressed ?? results.n_distressed)}
+                    value={activeResults?.n_distressed ?? 0}
+                    delta={(activeResults?.n_distressed ?? 0) - (prevResults?.n_distressed ?? activeResults?.n_distressed ?? 0)}
                     reversed={true}
                     prefix=""
                     suffix=""
@@ -1325,34 +1602,74 @@ export default function Simulation() {
                   />
                   <MetricCard
                     label="Capital Lost"
-                    value={results.equity_loss ?? 0}
-                    delta={(results.equity_loss ?? 0) - (prevResults?.equity_loss ?? 0) === 0 ? 0 : (results.equity_loss ?? 0) - (prevResults?.equity_loss ?? 0)}
+                    value={activeResults?.equity_loss ?? 0}
+                    delta={(activeResults?.equity_loss ?? 0) - (prevResults?.equity_loss ?? 0)}
                     reversed={true}
                     color="text-crisis-red"
                   />
                   <MetricCard
                     label="Asset Price"
                     value={
-                      results.final_asset_price !== undefined
-                        ? (results.final_asset_price * 100 < 0.1 && results.final_asset_price > 0
-                            ? "< 0.1%"
-                            : `${(results.final_asset_price * 100).toFixed(1)}%`)
+                      activeResults?.final_asset_price !== undefined
+                        ? (activeResults.final_asset_price * 100 < 0.1 && activeResults.final_asset_price > 0
+                          ? "< 0.1%"
+                          : `${(activeResults.final_asset_price * 100).toFixed(1)}%`)
                         : "100%"
                     }
                     delta={
-                      results.final_asset_price !== undefined 
-                      ? (results.final_asset_price * 100) - ((prevResults?.final_asset_price ?? results.final_asset_price) * 100)
-                      : 0
+                      activeResults?.final_asset_price !== undefined
+                        ? (activeResults.final_asset_price * 100) - ((prevResults?.final_asset_price ?? activeResults.final_asset_price) * 100)
+                        : 0
                     }
                     reversed={false}
                     prefix=""
                     suffix=""
                     color={
-                      (results.final_asset_price ?? 1) < 0.9
+                      (activeResults?.final_asset_price ?? 1) < 0.9
                         ? "text-crisis-red"
                         : "text-stability-green"
                     }
                   />
+
+                  {/* Extra Metrics based on Mode */}
+
+
+                  {tab === "climate" && activeResults?.total_brown_loss !== undefined && (
+                    <div className="col-span-2 flex flex-col justify-center gap-2 p-3 rounded-lg bg-white/[0.03] border border-white/10">
+                      <div className="flex items-center justify-between text-[11px] uppercase tracking-wider font-bold text-text-muted">
+                        <span>Net Transition Impact</span>
+                        <span className={cn(
+                          (activeResults.total_green_gain - activeResults.total_brown_loss) >= 0
+                            ? "text-stability-green"
+                            : "text-amber-500"
+                        )}>
+                          {formatUSD(activeResults.total_green_gain - activeResults.total_brown_loss)}
+                        </span>
+                      </div>
+
+                      <div className="relative h-2 w-full bg-white/10 rounded-full overflow-hidden flex">
+                        <div
+                          className="h-full bg-amber-500 transition-all duration-1000"
+                          style={{ width: `${(activeResults.total_brown_loss / (activeResults.total_brown_loss + activeResults.total_green_gain + 0.01)) * 100}%` }}
+                        />
+                        <div
+                          className="h-full bg-stability-green transition-all duration-1000"
+                          style={{ width: `${(activeResults.total_green_gain / (activeResults.total_brown_loss + activeResults.total_green_gain + 0.01)) * 100}%` }}
+                        />
+                      </div>
+
+                      <div className="flex justify-between text-[10px] font-[family-name:var(--font-mono)]">
+                        <span className="text-amber-500 flex items-center gap-1">
+                          <TrendingDown className="w-3 h-3" />
+                          Brown: {formatUSD(activeResults.total_brown_loss)}
+                        </span>
+                        <span className="text-stability-green flex items-center gap-1">
+                          <Zap className="w-3 h-3" />
+                          Green: {formatUSD(activeResults.total_green_gain)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Circuit Breaker Alert */}
@@ -1460,6 +1777,32 @@ export default function Simulation() {
                           name="Failed Payments"
                           yAxisId="right"
                         />
+                        {/* Margin Calls area (Orange) */}
+                        {timelineData.some(d => d.margin > 0) && (
+                          <Area
+                            type="monotone"
+                            dataKey="margin"
+                            stroke="#f97316" // Orange-500
+                            fillOpacity={0.1}
+                            fill="#f97316"
+                            strokeWidth={1}
+                            name="Margin ($M)"
+                            yAxisId="right"
+                          />
+                        )}
+                        {/* Strategic Run Rate (Purple) */}
+                        {tab === "strategic" && (
+                          <Area
+                            type="step"
+                            dataKey="runRate"
+                            stroke="#8b5cf6" // Violet-500
+                            fillOpacity={0.1}
+                            fill="#8b5cf6"
+                            strokeWidth={2}
+                            name="Run Rate %"
+                            yAxisId="right"
+                          />
+                        )}
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
@@ -1518,16 +1861,35 @@ export default function Simulation() {
                       {formatUSD(gameData.opaque?.total_fire_sale_loss ?? 0)}
                     </p>
                   </div>
-                  <div className="text-center border-x border-border px-4">
-                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-data-blue uppercase tracking-wider mb-1">
-                      Capital Saved by AI
+                  <div className="text-center border-x border-border px-4 relative group">
+                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-data-blue uppercase tracking-wider mb-1 flex items-center justify-center gap-1 cursor-help">
+                      Capital Saved
+                      <Info className="w-3 h-3 text-data-blue/50" />
                     </p>
-                    <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-data-blue">
+                    <p className={cn(
+                      "text-3xl font-bold font-[family-name:var(--font-mono)]",
+                      (gameData.capital_saved ?? 0) >= 0 ? "text-data-blue" : "text-amber-warn"
+                    )}>
                       {formatUSD(gameData.capital_saved ?? 0)}
                     </p>
                     <p className="text-[10px] text-text-muted mt-1">
-                      Transparency Dividend
+                      {(gameData.capital_saved ?? 0) >= 0 ? "Transparency Dividend" : "Transparency Penalty"}
                     </p>
+
+                    {/* Hover Tooltip */}
+                    <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 mb-2 w-56 p-3 glass-bright rounded-lg text-xs text-left shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-[100] border border-white/10 backdrop-blur-3xl">
+                      {(gameData.capital_saved ?? 0) >= 0 ? (
+                        <>
+                          <span className="text-data-blue font-bold block mb-1">Dividend (+):</span>
+                          AI transparency calmed the market, preventing panic runs on solvent banks.
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-amber-warn font-bold block mb-1">Penalty (-):</span>
+                          Transparency revealed insolvency, accelerating rational defaults (efficient market hypothesis).
+                        </>
+                      )}
+                    </div>
                   </div>
                   <div className="text-center">
                     <p className="text-[10px] font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-1">
@@ -1597,7 +1959,7 @@ export default function Simulation() {
                         {selectedNode.tier || "Unknown Tier"}
                       </span>
                     </div>
-                    <button 
+                    <button
                       onClick={() => setSelectedNode(null)}
                       className="text-text-muted hover:text-white transition-colors"
                     >
@@ -1624,11 +1986,11 @@ export default function Simulation() {
                         (results.status[selectedNode.id] === "Default" || gameStatusMap[selectedNode.id] === "WITHDRAW")
                           ? "bg-crisis-red/20 text-crisis-red border-crisis-red/30"
                           : (results.status[selectedNode.id] === "Distressed")
-                          ? "bg-amber-warn/20 text-amber-warn border-amber-warn/30"
-                          : "bg-stability-green/20 text-stability-green border-stability-green/30"
+                            ? "bg-amber-warn/20 text-amber-warn border-amber-warn/30"
+                            : "bg-stability-green/20 text-stability-green border-stability-green/30"
                       )}>
-                        {gamePlaybackActive 
-                          ? (gameStatusMap[selectedNode.id] || "HOLD") 
+                        {gamePlaybackActive
+                          ? (gameStatusMap[selectedNode.id] || "HOLD")
                           : (results.status[selectedNode.id] || "Healthy")}
                       </span>
                     </div>
@@ -1656,85 +2018,85 @@ export default function Simulation() {
             </motion.button>
           )}
 
-        {/* Replay/Stop Contagion Button */}
-        {results && results.status && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            onClick={contagionActive ? stopContagion : startContagion}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
-              contagionActive
-                ? "border-crisis-red/40 shadow-lg shadow-crisis-red/10 bg-crisis-red/10"
-                : "border-border-bright hover:border-crisis-red/40 hover:shadow-lg hover:shadow-crisis-red/10"
-            )}
-          >
-            {contagionActive ? (
-              <Square className="h-4 w-4 text-crisis-red fill-crisis-red" />
-            ) : (
-              <RotateCcw className="h-4 w-4 text-crisis-red group-hover:scale-110 transition-transform" />
-            )}
-            <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-crisis-red transition-colors">
-              {contagionActive ? "STOP REPLAY" : "REPLAY CONTAGION"}
-            </span>
-          </motion.button>
-        )}
-
-        {/* Game Replay/Stop Button */}
-        {results && results.opaque && tab === "strategic" && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            onClick={gamePlaybackActive ? stopGamePlayback : startGamePlayback}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
-              gamePlaybackActive
-                ? "border-neon-purple/40 shadow-lg shadow-neon-purple/10 bg-neon-purple/10"
-                : "border-border-bright hover:border-neon-purple/40 hover:shadow-lg hover:shadow-neon-purple/10"
-            )}
-          >
-            {gamePlaybackActive ? (
-              <Square className="h-4 w-4 text-neon-purple fill-neon-purple" />
-            ) : (
-              <RotateCcw className="h-4 w-4 text-neon-purple group-hover:scale-110 transition-transform" />
-            )}
-            <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-neon-purple transition-colors">
-              {gamePlaybackActive ? "STOP GAME" : "REPLAY GAME"}
-            </span>
-          </motion.button>
-        )}
-
-        {/* Regime toggle for game playback */}
-        {results && results.opaque && tab === "strategic" && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex items-center gap-1 p-1 rounded-lg glass-bright border border-border-bright"
-          >
-            <button
-              onClick={() => setGameRegime("opaque")}
+          {/* Replay/Stop Contagion Button */}
+          {results && results.status && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onClick={contagionActive ? stopContagion : startContagion}
               className={cn(
-                "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
-                gameRegime === "opaque"
-                  ? "bg-crisis-red/20 text-crisis-red border border-crisis-red/40"
-                  : "text-text-muted hover:text-text-secondary"
+                "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
+                contagionActive
+                  ? "border-crisis-red/40 shadow-lg shadow-crisis-red/10 bg-crisis-red/10"
+                  : "border-border-bright hover:border-crisis-red/40 hover:shadow-lg hover:shadow-crisis-red/10"
               )}
             >
-              OPAQUE
-            </button>
-            <button
-              onClick={() => setGameRegime("transparent")}
+              {contagionActive ? (
+                <Square className="h-4 w-4 text-crisis-red fill-crisis-red" />
+              ) : (
+                <RotateCcw className="h-4 w-4 text-crisis-red group-hover:scale-110 transition-transform" />
+              )}
+              <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-crisis-red transition-colors">
+                {contagionActive ? "STOP REPLAY" : "REPLAY CONTAGION"}
+              </span>
+            </motion.button>
+          )}
+
+          {/* Game Replay/Stop Button */}
+          {results && results.opaque && tab === "strategic" && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onClick={gamePlaybackActive ? stopGamePlayback : startGamePlayback}
               className={cn(
-                "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
-                gameRegime === "transparent"
-                  ? "bg-stability-green/20 text-stability-green border border-stability-green/40"
-                  : "text-text-muted hover:text-text-secondary"
+                "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
+                gamePlaybackActive
+                  ? "border-neon-purple/40 shadow-lg shadow-neon-purple/10 bg-neon-purple/10"
+                  : "border-border-bright hover:border-neon-purple/40 hover:shadow-lg hover:shadow-neon-purple/10"
               )}
             >
-              TRANSPARENT
-            </button>
-          </motion.div>
-        )}
+              {gamePlaybackActive ? (
+                <Square className="h-4 w-4 text-neon-purple fill-neon-purple" />
+              ) : (
+                <RotateCcw className="h-4 w-4 text-neon-purple group-hover:scale-110 transition-transform" />
+              )}
+              <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-neon-purple transition-colors">
+                {gamePlaybackActive ? "STOP GAME" : "REPLAY GAME"}
+              </span>
+            </motion.button>
+          )}
+
+          {/* Regime toggle for game playback */}
+          {results && results.opaque && tab === "strategic" && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex items-center gap-1 p-1 rounded-lg glass-bright border border-border-bright"
+            >
+              <button
+                onClick={() => setGameRegime("opaque")}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
+                  gameRegime === "opaque"
+                    ? "bg-crisis-red/20 text-crisis-red border border-crisis-red/40"
+                    : "text-text-muted hover:text-text-secondary"
+                )}
+              >
+                OPAQUE
+              </button>
+              <button
+                onClick={() => setGameRegime("transparent")}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
+                  gameRegime === "transparent"
+                    ? "bg-stability-green/20 text-stability-green border border-stability-green/40"
+                    : "text-text-muted hover:text-text-secondary"
+                )}
+              >
+                TRANSPARENT
+              </button>
+            </motion.div>
+          )}
         </div>
       </div>
 
@@ -1748,6 +2110,6 @@ export default function Simulation() {
         results={results}
         tab={tab}
       />
-    </div>
+    </div >
   );
 }
