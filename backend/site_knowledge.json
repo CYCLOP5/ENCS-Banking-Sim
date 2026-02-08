@@ -1,0 +1,70 @@
+{
+  "site": "ENCS Systemic Risk Engine",
+  "pages": [
+    {
+      "id": "home",
+      "title": "Home",
+      "summary": "ENCS maps global banking fault lines, simulates cascading failures across 4,500+ institutions, predicts contagion with GNNs, and stress-tests climate shocks.",
+      "highlights": [
+        "Systemic Risk Intelligence platform for contagion analysis",
+        "4,500+ banks modeled, ~24T interbank volume",
+        "PNA GNN with 13-dimensional feature space",
+        "Rust-based intraday simulation for speed"
+      ]
+    },
+    {
+      "id": "methodology",
+      "title": "Methodology",
+      "summary": "Explains four computational layers: clearing physics, graph intelligence, strategic game theory, and climate contagion.",
+      "highlights": [
+        "Eisenberg–Noe clearing fixed-point with Picard iteration",
+        "Status categories: Safe, Distressed, Default based on equity loss",
+        "Intraday extension adds fire-sale price impact, panic withdrawals, margin spirals",
+        "PNA GNN predicts risk frequency (continuous 0–1) from 13 features"
+      ]
+    },
+    {
+      "id": "architecture",
+      "title": "Architecture",
+      "summary": "Pipeline covers data ingestion, topology reconstruction, simulation engine, and GNN training; includes CCP transformation and derivatives risk weighting.",
+      "highlights": [
+        "Tiered core–periphery gravity model + RAS/Sinkhorn balancing",
+        "Rust FFI for high-throughput simulation",
+        "Fire-sale exponential price impact and intraday dynamics",
+        "Balanced Monte Carlo regimes and risk-frequency regression target"
+      ]
+    },
+    {
+      "id": "simulation",
+      "title": "Simulation",
+      "summary": "Interactive simulation for mechanical, climate, and strategic scenarios with timelines and detailed analysis.",
+      "highlights": [
+        "Mechanical: shock severity, intraday steps, panic rate, fire-sale alpha, margin sensitivity",
+        "Climate: carbon tax and green subsidy with systemic propagation",
+        "Strategic: opaque vs transparent global-games regime and run-rate comparison",
+        "Detailed analysis includes timelines for defaults, distressed, gridlock, margin calls, and equity loss"
+      ]
+    },
+    {
+      "id": "banks",
+      "title": "Bank Explorer",
+      "summary": "Sortable bank table with balance-sheet metrics, climate exposure, and GNN risk frequency per institution.",
+      "highlights": [
+        "Risk frequency from PNA GNN regression model",
+        "Carbon score and brown/green asset exposure",
+        "Leverage and equity for quick fragility signals"
+      ]
+    },
+    {
+      "id": "glossary",
+      "title": "Glossary",
+      "summary": "Definitions for key concepts like fire-sale spirals, contagion channels, GNNs, and Green Swan events.",
+      "highlights": [
+        "Eisenberg–Noe clearing, fire-sale spirals, margin calls",
+        "Contagion channels and systemic risk metrics",
+        "GNN risk frequency and core–periphery structure",
+        "Green Swan climate transition shocks"
+      ]
+    }
+  ]
+}

@@ -9,7 +9,7 @@ import {
   Building2,
 } from "lucide-react";
 import GlassPanel from "../components/GlassPanel";
-import { fetchBanks } from "../services/api";
+import { fetchBanks, explainBank } from "../services/api";
 import { cn, formatUSD, riskBg } from "../lib/utils";
 
 const PAGE_SIZE = 25;
@@ -35,6 +35,11 @@ export default function BankExplorer() {
   const [sortKey, setSortKey] = useState("total_assets");
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(0);
+  const [explainOpen, setExplainOpen] = useState(false);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState(null);
+  const [explainResponse, setExplainResponse] = useState(null);
+  const [explainBankRow, setExplainBankRow] = useState(null);
 
   useEffect(() => {
     fetchBanks()
@@ -78,6 +83,26 @@ export default function BankExplorer() {
       setSortDir("desc");
     }
     setPage(0);
+  };
+
+  const handleExplain = async (bank) => {
+    if (!bank?.bank_id) return;
+    setExplainOpen(true);
+    setExplainBankRow(bank);
+    setExplainLoading(true);
+    setExplainError(null);
+    setExplainResponse(null);
+    try {
+      const res = await explainBank({
+        bankId: bank.bank_id,
+        question: "Explain this bank's risk profile in simple terms.",
+      });
+      setExplainResponse(res.response);
+    } catch (e) {
+      setExplainError(e.message);
+    } finally {
+      setExplainLoading(false);
+    }
   };
 
   const columns = [
@@ -192,9 +217,17 @@ export default function BankExplorer() {
                       <span className="text-sm font-medium text-white truncate block">
                         {bank.name}
                       </span>
-                      <span className="text-[10px] text-text-muted font-[family-name:var(--font-mono)]">
-                        {bank.bank_id}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-text-muted font-[family-name:var(--font-mono)]">
+                          {bank.bank_id}
+                        </span>
+                        <button
+                          onClick={() => handleExplain(bank)}
+                          className="text-[10px] font-bold uppercase tracking-wider text-neon-purple hover:text-neon-purple/80"
+                        >
+                          Explain
+                        </button>
+                      </div>
                     </div>
                     {/* Region */}
                     <div className="w-20">
@@ -314,6 +347,49 @@ export default function BankExplorer() {
           </GlassPanel>
         </motion.div>
       </div>
+
+      {explainOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-void/80 backdrop-blur-sm"
+            onClick={() => setExplainOpen(false)}
+          />
+          <div className="relative z-10 w-[92vw] max-w-2xl rounded-2xl glass-bright border border-border-bright p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-text-primary">
+                AI Summary — {explainBankRow?.name}
+              </h3>
+              <button
+                onClick={() => setExplainOpen(false)}
+                className="text-xs text-text-muted hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            {explainLoading ? (
+              <div className="text-xs text-text-muted">Generating…</div>
+            ) : explainError ? (
+              <div className="text-xs text-crisis-red">{explainError}</div>
+            ) : explainResponse ? (
+              <div className="space-y-2">
+                <p className="text-sm text-text-secondary">{explainResponse.summary}</p>
+                {Array.isArray(explainResponse.key_points) && explainResponse.key_points.length > 0 && (
+                  <ul className="list-disc list-inside text-xs text-text-secondary space-y-1">
+                    {explainResponse.key_points.map((pt, i) => (
+                      <li key={i}>{pt}</li>
+                    ))}
+                  </ul>
+                )}
+                {explainResponse.limitations && (
+                  <p className="text-[11px] text-text-muted">Limitations: {explainResponse.limitations}</p>
+                )}
+              </div>
+            ) : (
+              <div className="text-xs text-text-muted">No response.</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

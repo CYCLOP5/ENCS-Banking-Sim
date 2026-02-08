@@ -597,6 +597,11 @@ export default function Simulation() {
         });
       }
       setResults(res);
+      if (res?.run_id) {
+        const runType = tab === "strategic" ? "game" : tab;
+        localStorage.setItem("encs:lastRunId", res.run_id);
+        localStorage.setItem("encs:lastRunType", runType);
+      }
     } catch (e) {
       setError(e.message);
     } finally {

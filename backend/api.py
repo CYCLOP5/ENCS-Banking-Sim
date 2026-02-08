@@ -17,12 +17,29 @@ import traceback
 import os
 import logging
 import ctypes as _ctypes
+import uuid
+from dotenv import load_dotenv
 
 import simulation_engine as sim
 from strategic_model import run_game_simulation
 from climate_risk import assign_climate_exposure, run_transition_shock
 
 from pathlib import Path
+
+# Load environment variables from .env (if present)
+load_dotenv()
+
+from llm_store import LlmStore
+from llm_explain import (
+    build_run_summary,
+    build_bank_context,
+    build_prompt,
+    build_bank_prompt,
+    call_groq,
+    build_graph_evidence,
+    load_site_knowledge,
+    call_groq_chat,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +98,7 @@ app.add_middleware(
 # ── Cached network data ───────────────────────────────────────────────────
 
 _cache: Dict[str, Any] = {}
+_llm_store = LlmStore()
 
 
 def _get_cached_model():
@@ -155,6 +173,26 @@ class GameRequest(BaseModel):
     exposure: float = Field(1e9, ge=1e8, le=5e10)
 
 
+class ExplainRunRequest(BaseModel):
+    run_id: Optional[str] = None
+    run_type: Optional[str] = None
+    question: Optional[str] = "Summarize the simulation results in simple terms."
+
+
+class ExplainBankRequest(BaseModel):
+    bank_id: str
+    run_id: Optional[str] = None
+    question: Optional[str] = "Explain this bank's risk profile in simple terms."
+
+
+class ChatRequest(BaseModel):
+    messages: List[Dict[str, str]]
+    run_id: Optional[str] = None
+    run_type: Optional[str] = None
+    bank_id: Optional[str] = None
+    bank_name: Optional[str] = None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 def _ndarray_to_list(v):
@@ -198,6 +236,115 @@ def _clean_results(d: dict) -> dict:
         else:
             out[k] = v
     return out
+
+
+def _build_bank_snapshot(df: pd.DataFrame) -> list[dict]:
+    snapshot = []
+    for i, row in df.iterrows():
+        snapshot.append({
+            "id": int(i),
+            "bank_id": str(row.get("bank_id", "")),
+            "name": str(row.get("bank_name", "")),
+            "region": str(row.get("region", "")),
+            "tier": str(row.get("tier", "")),
+            "total_assets": float(row.get("total_assets", 0) or 0),
+            "total_liabilities": float(row.get("total_liabilities", 0) or 0),
+            "equity": float(row.get("equity_capital", 0) or 0),
+        })
+    return snapshot
+
+
+def _extract_top_losses(results: dict, top_n: int = 5) -> list[dict]:
+    names = results.get("bank_names") or []
+    initial = results.get("initial_equity") or []
+    final = results.get("final_equity") or []
+    rows = []
+    for i, name in enumerate(names):
+        if i < len(initial) and i < len(final):
+            loss = (initial[i] or 0) - (final[i] or 0)
+            rows.append({"name": str(name), "equity_loss": float(loss)})
+    rows.sort(key=lambda r: r["equity_loss"], reverse=True)
+    return rows[:top_n]
+
+
+def _percentile_rank(values: list[float], value: float) -> float:
+    if not values:
+        return 0.0
+    below = sum(1 for v in values if v <= value)
+    return round(100.0 * below / len(values), 2)
+
+
+def _bank_peer_summary(all_banks: list[dict], bank: dict) -> dict:
+    region = bank.get("region")
+    tier = bank.get("tier")
+    peers = [b for b in all_banks if b.get("region") == region and b.get("tier") == tier]
+    return {
+        "peer_group_size": len(peers),
+        "region": region,
+        "tier": tier,
+    }
+
+
+def _build_chat_evidence(req: ChatRequest) -> Dict[str, Any]:
+    site_knowledge = load_site_knowledge()
+    stored = (
+        _llm_store.get_run(req.run_id)
+        if req.run_id
+        else _llm_store.get_latest_run(req.run_type)
+    )
+    run_summary = None
+    graph_evidence = None
+    if stored:
+        run_summary = stored.summary_json or build_run_summary(stored.run_type, stored.result_json)
+        graph_evidence = build_graph_evidence(stored.result_json)
+
+    bank_profile = None
+    if req.bank_id:
+        bank_profile = _llm_store.get_bank_profile(req.bank_id)
+    elif req.bank_name:
+        bank_profile = _llm_store.find_bank_profile_by_name(req.bank_name)
+
+    bank_context = None
+    if bank_profile:
+        bank_context = build_bank_context(
+            bank_profile,
+            stored.run_type if stored else None,
+            stored.result_json if stored else None,
+        )
+
+    bank_count = _llm_store.get_bank_profile_count()
+    include_all = os.environ.get("ENCS_CHAT_INCLUDE_ALL_BANKS", "0") == "1"
+    top_banks = _llm_store.get_top_bank_profiles(limit=8)
+    all_banks = None
+    if include_all:
+        all_banks = [
+            {
+                "bank_id": b.get("bank_id"),
+                "name": b.get("name"),
+                "region": b.get("region"),
+                "tier": b.get("tier"),
+                "total_assets": b.get("total_assets"),
+                "equity": b.get("equity"),
+                "leverage_ratio": b.get("leverage_ratio"),
+                "gnn_risk_score": b.get("gnn_risk_score"),
+                "carbon_score": b.get("carbon_score"),
+            }
+            for b in _llm_store.get_all_bank_profiles()
+        ]
+
+    return {
+        "site": site_knowledge,
+        "latest_run": {
+            "run_id": stored.run_id if stored else None,
+            "run_type": stored.run_type if stored else None,
+            "summary": run_summary,
+            "graphs": graph_evidence,
+        },
+        "bank_context": bank_context,
+        "bank_profiles_sample": top_banks,
+        "bank_profiles_count": bank_count,
+        "bank_profiles_all": all_banks,
+    }
 
 
 # ── Routes ────────────────────────────────────────────────────────────────
@@ -301,6 +448,11 @@ async def get_banks():
                 "gnn_risk_score": float(risk_scores[i]) if i < len(risk_scores) else 0.0,
             })
 
+        if os.environ.get("ENCS_LLM_STORE_BANKS", "0") == "1":
+            try:
+                _llm_store.upsert_bank_profiles(banks)
+            except Exception:
+                logger.exception("Failed to store bank profiles")
         return {"banks": banks, "total": len(banks)}
     except Exception as e:
         traceback.print_exc()
@@ -348,7 +500,22 @@ async def run_simulation(req: SimulationRequest):
             )
 
         results["bank_names"] = df["bank_name"].tolist()
-        return _clean_results(results)
+        cleaned = _clean_results(results)
+        run_id = str(uuid.uuid4())
+        try:
+            summary = build_run_summary("mechanical", cleaned)
+            _llm_store.save_run(
+                run_id=run_id,
+                run_type="mechanical",
+                request_json=req.model_dump(),
+                result_json=cleaned,
+                bank_snapshot_json={"banks": _build_bank_snapshot(df)},
+                summary_json=summary,
+            )
+        except Exception:
+            logger.exception("Failed to store simulation run")
+        cleaned["run_id"] = run_id
+        return cleaned
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -374,7 +541,22 @@ async def run_climate(req: ClimateRequest):
         )
 
         results["bank_names"] = df["bank_name"].tolist()
-        return _clean_results(results)
+        cleaned = _clean_results(results)
+        run_id = str(uuid.uuid4())
+        try:
+            summary = build_run_summary("climate", cleaned)
+            _llm_store.save_run(
+                run_id=run_id,
+                run_type="climate",
+                request_json=req.model_dump(),
+                result_json=cleaned,
+                bank_snapshot_json={"banks": _build_bank_snapshot(df)},
+                summary_json=summary,
+            )
+        except Exception:
+            logger.exception("Failed to store climate run")
+        cleaned["run_id"] = run_id
+        return cleaned
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -412,7 +594,7 @@ async def run_game(req: GameRequest):
             interbank_exposure_usd=req.exposure,
         )
 
-        return {
+        cleaned = {
             "opaque": _clean_results(results_opaque),
             "transparent": _clean_results(results_transparent),
             "capital_saved": float(
@@ -420,6 +602,21 @@ async def run_game(req: GameRequest):
                 - results_transparent.get("total_fire_sale_loss", 0)
             ),
         }
+        run_id = str(uuid.uuid4())
+        try:
+            summary = build_run_summary("game", cleaned)
+            _llm_store.save_run(
+                run_id=run_id,
+                run_type="game",
+                request_json=req.model_dump(),
+                result_json=cleaned,
+                bank_snapshot_json=None,
+                summary_json=summary,
+            )
+        except Exception:
+            logger.exception("Failed to store game run")
+        cleaned["run_id"] = run_id
+        return cleaned
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -444,6 +641,97 @@ async def get_gnn_risk():
             })
 
         return {"scores": scores}
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/explain/run")
+async def explain_run(req: ExplainRunRequest):
+    try:
+        stored = (
+            _llm_store.get_run(req.run_id)
+            if req.run_id
+            else _llm_store.get_latest_run(req.run_type)
+        )
+        if not stored:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        summary = stored.summary_json or build_run_summary(stored.run_type, stored.result_json)
+        highlights = _extract_top_losses(stored.result_json, top_n=5)
+        graph_evidence = build_graph_evidence(stored.result_json)
+        evidence = {
+            "run_id": stored.run_id,
+            "run_type": stored.run_type,
+            "created_at": stored.created_at,
+            "request": stored.request_json,
+            "summary": summary,
+            "highlights": highlights,
+            "graphs": graph_evidence,
+        }
+        prompt = build_prompt(req.question or "Summarize the simulation.", evidence)
+        response = call_groq(prompt)
+        return {"run_id": stored.run_id, "response": response, "evidence": evidence}
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/explain/bank")
+async def explain_bank(req: ExplainBankRequest):
+    try:
+        bank_profile = _llm_store.get_bank_profile(req.bank_id)
+        if not bank_profile and req.bank_id:
+            bank_profile = _llm_store.find_bank_profile_by_name(req.bank_id)
+        if not bank_profile:
+            raise HTTPException(status_code=404, detail="Bank profile not found")
+
+        all_banks = _llm_store.get_all_bank_profiles()
+        risk_scores = [float(b.get("gnn_risk_score", 0) or 0) for b in all_banks]
+        assets = [float(b.get("total_assets", 0) or 0) for b in all_banks]
+        leverage = [float(b.get("leverage_ratio", 0) or 0) for b in all_banks]
+
+        bank_percentiles = {
+            "risk_score_pct": _percentile_rank(risk_scores, float(bank_profile.get("gnn_risk_score", 0) or 0)),
+            "assets_pct": _percentile_rank(assets, float(bank_profile.get("total_assets", 0) or 0)),
+            "leverage_pct": _percentile_rank(leverage, float(bank_profile.get("leverage_ratio", 0) or 0)),
+        }
+        peer_summary = _bank_peer_summary(all_banks, bank_profile)
+
+        stored = _llm_store.get_run(req.run_id) if req.run_id else None
+        run_type = stored.run_type if stored else None
+        run_results = stored.result_json if stored else None
+        bank_context = build_bank_context(bank_profile, run_type, run_results)
+
+        evidence = {
+            "bank_id": req.bank_id,
+            "bank_context": bank_context,
+            "run_id": stored.run_id if stored else None,
+            "bank_percentiles": bank_percentiles,
+            "peer_summary": peer_summary,
+        }
+        prompt = build_bank_prompt(req.question or "Explain this bank.", evidence)
+        response = call_groq(prompt)
+        return {"bank_id": req.bank_id, "response": response, "evidence": evidence}
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    try:
+        if not req.messages:
+            raise HTTPException(status_code=400, detail="messages is required")
+        evidence = _build_chat_evidence(req)
+        response_text = call_groq_chat(req.messages, evidence)
+        return {"response": response_text, "evidence": evidence}
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
