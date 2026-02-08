@@ -107,19 +107,22 @@ struct StepResult {
     total_equity_loss: f64,
     #[pyo3(get)]
     margin_calls_total: f64,
+    #[pyo3(get)]
+    systemic_credit_losses: f64,
 }
 
 #[pymethods]
 impl StepResult {
     fn __repr__(&self) -> String {
         format!(
-            "StepResult(t={}, price={:.4}, defaults={}, distressed={}, withdrawn=${:.1}B, margin=${:.1}B)",
+            "StepResult(t={}, price={:.4}, defaults={}, distressed={}, withdrawn=${:.1}B, margin=${:.1}B, credit_loss=${:.1}B)",
             self.t,
             self.asset_price,
             self.n_defaults,
             self.n_distressed,
             self.total_withdrawn / 1e9,
             self.margin_calls_total / 1e9,
+            self.systemic_credit_losses / 1e9,
         )
     }
 }
@@ -194,6 +197,8 @@ fn run_intraday_step_impl(
     let fire_sale_volume = total_withdrawn_global;
 
     let mut margin_calls_total = 0.0_f64;
+    let mut systemic_credit_losses = 0.0_f64;
+
     if margin_sensitivity > 0.0 {
         let price_drop = 1.0 - state.asset_price; 
 
@@ -213,7 +218,7 @@ fn run_intraday_step_impl(
                     let shortfall = margin_call - state.external_assets[i];
                     state.external_assets[i] = 0.0;
 
-                    total_withdrawn_global += shortfall;
+                    systemic_credit_losses += shortfall;
                 }
             }
         }
@@ -310,6 +315,7 @@ fn run_intraday_step_impl(
         failed_payments,
         total_equity_loss,
         margin_calls_total,
+        systemic_credit_losses,
     }
 }
 
@@ -409,6 +415,7 @@ fn run_full_simulation(
                 failed_payments: 0,
                 total_equity_loss: eq_loss,
                 margin_calls_total: 0.0,
+                systemic_credit_losses: 0.0,
             });
             continue;
         }
@@ -456,6 +463,8 @@ fn run_full_simulation(
     let equity_loss_timeline: Vec<f64> = step_results.iter().map(|s| s.total_equity_loss).collect();
     let margin_calls_timeline: Vec<f64> = step_results.iter().map(|s| s.margin_calls_total).collect();
 
+    let systemic_credit_losses_total: f64 = step_results.iter().map(|s| s.systemic_credit_losses).sum();
+
     let total_equity_loss: f64 = initial_equity_saved.iter()
         .zip(state.equity.iter())
         .map(|(init, fin)| (init - fin).max(0.0))
@@ -467,6 +476,7 @@ fn run_full_simulation(
     dict.set_item("n_defaults", n_defaults_final)?;
     dict.set_item("n_distressed", n_distressed_final)?;
     dict.set_item("equity_loss", total_equity_loss)?;
+    dict.set_item("systemic_credit_losses", systemic_credit_losses_total)?;
     dict.set_item("status", status_strings)?;
     dict.set_item("final_equity", state.equity.to_vec())?;
     dict.set_item("initial_equity", initial_equity_saved)?;

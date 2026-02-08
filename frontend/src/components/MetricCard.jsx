@@ -17,8 +17,9 @@ export default function MetricCard({
   const isCurrency =
     typeof value === "number" || (!Number.isNaN(nValue) && value !== "");
 
-  const displayVal =
-    isCurrency && label !== "Defaults" && label !== "Distressed" && !suffix && !prefix
+  const useUSD = isCurrency && label !== "Defaults" && label !== "Distressed" && !suffix && !prefix;
+
+  const displayVal = useUSD
       ? formatUSD(value)
       : `${prefix ?? ""}${value}${suffix ?? ""}`;
 
@@ -50,8 +51,7 @@ export default function MetricCard({
                 : "text-stability-green"
             )}
           >
-            {delta > 0 ? "↑" : "↓"} {Math.abs(delta).toFixed(typeof delta === 'number' && Number.isInteger(delta) ? 0 : 1)}
-            {label.includes("Loss") || label.includes("%") ? "%" : ""}
+            {delta > 0 ? "↑" : "↓"} {useUSD ? formatUSD(Math.abs(delta)).replace("$", "") : Math.abs(delta).toLocaleString()}
           </span>
         )}
       </div>
