@@ -17,6 +17,8 @@ Usage:
     python ml_pipeline.py --explain              # run explainability after training
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import multiprocessing as mp
