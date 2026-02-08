@@ -270,25 +270,6 @@ export default function Simulation() {
     return map;
   }, [statusArray]);
 
-  // ── Unified tab-switch handler ──
-  // Stops animations & physics synchronously, then defers the heavy state
-  // updates (setResults → enriched recompute) via startTransition so the
-  // browser stays responsive during the graph teardown.
-  const switchTab = useCallback((newTab) => {
-    if (tab === newTab) return;
-    // 1. Stop running animations (clears timers — side-effect, not deferred)
-    stopContagion();
-    stopGamePlayback();
-    // 2. Freeze the force simulation *before* clearing data to prevent
-    //    the engine from trying to re-layout during the transition.
-    graphRef.current?.stopPhysics();
-    // 3. Defer expensive state updates so the tab highlight can paint first
-    startTransition(() => {
-      setResults(null);
-      setTab(newTab);
-    });
-  }, [tab, stopContagion, stopGamePlayback]);
-
   // ── Stop contagion animation ──
   const stopContagion = useCallback(() => {
     if (contagionTimerRef.current) {
@@ -313,6 +294,25 @@ export default function Simulation() {
     setGameFlippedSet(null);
     if (graphRef.current) graphRef.current.zoomToFit(1000);
   }, []);
+
+  // ── Unified tab-switch handler ──
+  // Stops animations & physics synchronously, then defers the heavy state
+  // updates (setResults → enriched recompute) via startTransition so the
+  // browser stays responsive during the graph teardown.
+  const switchTab = useCallback((newTab) => {
+    if (tab === newTab) return;
+    // 1. Stop running animations (clears timers — side-effect, not deferred)
+    stopContagion();
+    stopGamePlayback();
+    // 2. Freeze the force simulation *before* clearing data to prevent
+    //    the engine from trying to re-layout during the transition.
+    graphRef.current?.stopPhysics();
+    // 3. Defer expensive state updates so the tab highlight can paint first
+    startTransition(() => {
+      setResults(null);
+      setTab(newTab);
+    });
+  }, [tab, stopContagion, stopGamePlayback]);
 
   // ── Start game playback ──
   const startGamePlayback = useCallback(() => {
@@ -644,6 +644,7 @@ export default function Simulation() {
       loss: val / 1e9,
       defaults: results.defaults_timeline?.[i] ?? 0,
       price: results.price_timeline?.[i] ?? 1,
+      gridlock: results.gridlock_timeline?.[i] ?? 0,
     })) ?? [];
 
   // ── Defaulted & distressed bank names ──
@@ -1243,6 +1244,24 @@ export default function Simulation() {
                               stopOpacity={0}
                             />
                           </linearGradient>
+                          <linearGradient
+                            id="gridlockGrad"
+                            x1="0"
+                            y1="0"
+                            x2="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="0%"
+                              stopColor="#ffaa00"
+                              stopOpacity={0.25}
+                            />
+                            <stop
+                              offset="100%"
+                              stopColor="#ffaa00"
+                              stopOpacity={0}
+                            />
+                          </linearGradient>
                         </defs>
                         <XAxis
                           dataKey="step"
@@ -1251,10 +1270,19 @@ export default function Simulation() {
                           tickLine={false}
                         />
                         <YAxis
+                          yAxisId="left"
                           tick={{ fill: "#555566", fontSize: 10 }}
                           axisLine={false}
                           tickLine={false}
                           width={40}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          tick={{ fill: "#555566", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                          width={35}
                         />
                         <Tooltip
                           contentStyle={{
@@ -1273,6 +1301,16 @@ export default function Simulation() {
                           fill="url(#lossGrad)"
                           strokeWidth={2}
                           name="Loss ($B)"
+                          yAxisId="left"
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="gridlock"
+                          stroke="#ffaa00"
+                          fill="url(#gridlockGrad)"
+                          strokeWidth={1.5}
+                          name="Failed Payments"
+                          yAxisId="right"
                         />
                       </AreaChart>
                     </ResponsiveContainer>
