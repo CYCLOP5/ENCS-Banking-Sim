@@ -56,6 +56,12 @@ export function runSimulation(params = {}) {
       default_fund_ratio: params.defaultFundRatio ?? 0.05,
       circuit_breaker_enabled: params.circuitBreakerEnabled ?? false,
       circuit_breaker_threshold: params.circuitBreakerThreshold ?? 0.15,
+      // Strategic
+      use_strategic: params.useStrategic ?? false,
+      strategic_alpha: params.strategicAlpha ?? 5.0,
+      strategic_risk_aversion: params.strategicRiskAversion ?? 1.0,
+      strategic_interest_rate: params.strategicInterestRate ?? 0.05,
+      strategic_recovery_rate: params.strategicRecoveryRate ?? 0.40,
     }),
   });
 }

@@ -51,6 +51,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   width,
   height,
   onNodeClick,
+  onBackgroundClick,
   maxNodes = Infinity,
 }, ref) {
   const fgRef = useRef();
@@ -661,6 +662,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       linkDirectionalParticleSpeed={linkParticleSpeed}
       linkDirectionalParticleColor={linkParticleColor}
       onNodeClick={onNodeClick}
+      onBackgroundClick={onBackgroundClick}
       enableNodeDrag={false}
       warmupTicks={200}
       cooldownTime={10000}

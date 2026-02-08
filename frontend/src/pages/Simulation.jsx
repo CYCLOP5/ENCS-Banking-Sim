@@ -17,6 +17,8 @@ import {
   RotateCcw,
   Search,
   Square,
+  History,
+  X,
 } from "lucide-react";
 import GlassPanel from "../components/GlassPanel";
 import MetricCard from "../components/MetricCard";
@@ -55,13 +57,23 @@ function TabBtn({ active, onClick, icon: Icon, label }) {
 }
 
 /* ── Slider Input ──────────────────────────────────────────────── */
-function Slider({ label, value, onChange, min, max, step = 0.01, suffix = "" }) {
+function Slider({ label, value, onChange, min, max, step = 0.01, suffix = "", description }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
-          {label}
-        </span>
+        <div className="flex items-center gap-1.5 group relative">
+          <span className="text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+            {label}
+          </span>
+          {description && (
+            <>
+              <Info className="w-3 h-3 text-text-muted cursor-help opacity-60 hover:opacity-100 transition-opacity" />
+              <div className="absolute left-0 bottom-full mb-2 w-48 p-2 glass-bright rounded-lg text-xs text-text-secondary shadow-xl hidden group-hover:block z-50 pointer-events-none">
+                {description}
+              </div>
+            </>
+          )}
+        </div>
         <span className="text-xs text-white font-[family-name:var(--font-mono)] font-bold">
           {typeof value === "number" ? value.toFixed(step < 0.1 ? 2 : 0) : value}
           {suffix}
@@ -158,6 +170,30 @@ function DefaultTicker({ defaults = [], distressed = [] }) {
 /* ── Stable empty object so statusMap ref never changes when there's no status ── */
 const EMPTY_STATUS_MAP = Object.freeze({});
 
+/* ── Scenario Presets for Mechanical Simulation ── */
+const SCENARIOS = {
+  "2008_GFC": {
+    label: "2008 Global Financial Crisis",
+    description: "High interbank panic & fire-sale spiral",
+    params: { severity: 0.15, panicRate: 0.35, sigma: 0.20, fireSaleAlpha: 0.02, marginMultiplier: 1.5, useIntraday: true }
+  },
+  "2020_COVID": {
+    label: "2020 COVID-19 Shock",
+    description: "Massive external shock, dampened panic (stimulus)",
+    params: { severity: 0.30, panicRate: 0.10, sigma: 0.15, fireSaleAlpha: 0.01, nSteps: 40, useIntraday: true }
+  },
+  "2023_SVB": {
+    label: "2023 SVB Liquidity Run",
+    description: "Tech-focused run driven by rates & fear",
+    params: { severity: 0.05, panicRate: 0.45, marginMultiplier: 2.0, sigma: 0.12, useIntraday: true }
+  },
+  "CRYPTO_WINTER": {
+    label: "Crypto Winter (High Vol)",
+    description: "Extreme volatility & unmoored valuations",
+    params: { severity: 0.10, sigma: 0.25, fireSaleAlpha: 0.04, panicRate: 0.20, useIntraday: true }
+  }
+};
+
 /* ═══════════════════════════════════════════════════════════════════
    SIMULATION DASHBOARD
    ═══════════════════════════════════════════════════════════════════ */
@@ -169,6 +205,8 @@ export default function Simulation() {
   const [loading, setLoading] = useState(true);
   const [simulating, setSimulating] = useState(false);
   const [results, setResults] = useState(null);
+  const [prevResults, setPrevResults] = useState(null); // Comparison state
+  const [selectedNode, setSelectedNode] = useState(null); // Inspector state: node object
   const [error, setError] = useState(null);
   const containerRef = useRef(null);
   const graphRef = useRef(null);
@@ -217,7 +255,6 @@ export default function Simulation() {
   const [greenSubsidy, setGreenSubsidy] = useState(0.1);
   const [climateUseIntraday, setClimateUseIntraday] = useState(true);
   // Game
-  const [gameTransparent, setGameTransparent] = useState(false);
   const [gameSolvency, setGameSolvency] = useState(0.2);
   const [gameNBanks, setGameNBanks] = useState(20);
   const [gameNSteps, setGameNSteps] = useState(5);
@@ -228,6 +265,20 @@ export default function Simulation() {
   const [gameHaircut, setGameHaircut] = useState(0.20);
   const [gameMarginPressure, setGameMarginPressure] = useState(0.30);
   const [gameExposure, setGameExposure] = useState(1.0);
+  const [gameAlpha, setGameAlpha] = useState(5.0); // Public Signal Precision
+
+  /* ── Apply Scenario Preset ── */
+  const applyScenario = (key) => {
+    const s = SCENARIOS[key];
+    if (!s) return;
+    if (s.params.severity !== undefined) setSeverity(s.params.severity);
+    if (s.params.panicRate !== undefined) setPanicRate(s.params.panicRate);
+    if (s.params.sigma !== undefined) setSigma(s.params.sigma);
+    if (s.params.fireSaleAlpha !== undefined) setFireSaleAlpha(s.params.fireSaleAlpha);
+    if (s.params.marginMultiplier !== undefined) setMarginMultiplier(s.params.marginMultiplier);
+    if (s.params.nSteps !== undefined) setNSteps(s.params.nSteps);
+    if (s.params.useIntraday !== undefined) setUseIntraday(s.params.useIntraday);
+  };
 
   // ── Load topology + bank list ──
   useEffect(() => {
@@ -310,6 +361,7 @@ export default function Simulation() {
     // 3. Defer expensive state updates so the tab highlight can paint first
     startTransition(() => {
       setResults(null);
+      setPrevResults(null);
       setTab(newTab);
     });
   }, [tab, stopContagion, stopGamePlayback]);
@@ -590,17 +642,15 @@ export default function Simulation() {
           circuitBreakerThreshold,
         });
       } else if (tab === "strategic") {
-        res = await runGame({
-          trueSolvency: gameSolvency,
-          nBanks: gameNBanks,
+        res = await runSimulation({
+          useStrategic: true,
+          strategicAlpha: gameAlpha,
+          strategicRiskAversion: gameRiskAversion,
+          strategicInterestRate: gameInterestRate,
+          strategicRecoveryRate: gameRecoveryRate,
           nSteps: gameNSteps,
-          interestRate: gameInterestRate,
-          recoveryRate: gameRecoveryRate,
-          riskAversion: gameRiskAversion,
-          noiseStd: gameNoiseStd,
-          haircut: gameHaircut,
-          marginPressure: gameMarginPressure,
-          exposure: gameExposure * 1e9,
+          triggerIdx,
+          useIntraday: true,
         });
       } else {
         res = await runSimulation({
@@ -622,6 +672,7 @@ export default function Simulation() {
           circuitBreakerThreshold,
         });
       }
+      setPrevResults(results);
       setResults(res);
     } catch (e) {
       setError(e.message);
@@ -685,6 +736,13 @@ export default function Simulation() {
             width={dims.w}
             height={dims.h}
             maxNodes={liteMode ? 500 : Infinity}
+            onNodeClick={(node) => {
+              setSelectedNode(node);
+              if (graphRef.current && node) {
+                 graphRef.current.focusNode(node.id, 100);
+              }
+            }}
+            onBackgroundClick={() => setSelectedNode(null)}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-text-muted text-sm">
@@ -743,6 +801,34 @@ export default function Simulation() {
                 exit={{ opacity: 0, x: 10 }}
                 className="space-y-4"
               >
+                {/* Scenario Selector */}
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    <History className="w-3 h-3" />
+                    Load Historical Scenario
+                  </span>
+                  <div className="relative">
+                    <select
+                      onChange={(e) => applyScenario(e.target.value)}
+                      defaultValue=""
+                      className="w-full pl-3 pr-8 py-2 rounded-lg bg-white/[0.04] border border-border text-xs text-text-primary
+                        font-[family-name:var(--font-mono)] appearance-none focus:outline-none focus:border-stability-green/40 transition-colors cursor-pointer"
+                    >
+                      <option value="" disabled>Select a preset...</option>
+                      {Object.entries(SCENARIOS).map(([key, s]) => (
+                        <option key={key} value={key} className="bg-void-panel text-text-primary">
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <ChevronRight className="w-3.5 h-3.5 text-text-muted rotate-90" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-border" />
+
                 {/* Trigger Bank Selector */}
                 <div className="space-y-1.5">
                   <span className="text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
@@ -800,6 +886,7 @@ export default function Simulation() {
                   min={0}
                   max={1}
                   suffix="%"
+                  description="Percentage devaluation of external assets during stress event"
                 />
 
                 <div className="border-t border-border pt-3">
@@ -820,6 +907,7 @@ export default function Simulation() {
                       min={1}
                       max={50}
                       step={1}
+                      description="Number of discrete time steps for simulation convergence"
                     />
                     <Slider
                       label="Market Uncertainty (σ)"
@@ -828,6 +916,7 @@ export default function Simulation() {
                       min={0.01}
                       max={0.30}
                       step={0.01}
+                      description="Volatility of asset prices affecting margin calls"
                     />
                     <Slider
                       label="Panic Rate"
@@ -835,6 +924,7 @@ export default function Simulation() {
                       onChange={setPanicRate}
                       min={0}
                       max={0.5}
+                      description="Probability of bank run propagation per step"
                     />
                     <Slider
                       label="Fire-Sale α"
@@ -843,6 +933,7 @@ export default function Simulation() {
                       min={0}
                       max={0.05}
                       step={0.001}
+                      description="Price impact factor: how much selling reduces asset price"
                     />
                     <Slider
                       label="Margin Sensitivity"
@@ -851,6 +942,7 @@ export default function Simulation() {
                       min={0}
                       max={5}
                       step={0.1}
+                      description="Multiplier for collateral requirements based on volatility"
                     />
                   </>
                 )}
@@ -865,6 +957,7 @@ export default function Simulation() {
                     onChange={setDistressThreshold}
                     min={0}
                     max={1}
+                    description="Capital ratio below which a bank is considered in default"
                   />
                   <Slider
                     label="Max Iterations"
@@ -873,6 +966,7 @@ export default function Simulation() {
                     min={10}
                     max={500}
                     step={10}
+                    description="Limit on calculation cycles to prevent infinite loops"
                   />
                 </div>
 
@@ -892,6 +986,7 @@ export default function Simulation() {
                         min={0}
                         max={1}
                         suffix="%"
+                        description="Percentage of total interbank exposure routed through CCP"
                       />
                       <Slider
                         label="Default Fund %"
@@ -900,6 +995,7 @@ export default function Simulation() {
                         min={0.01}
                         max={0.25}
                         step={0.01}
+                        description="CCP buffer required as pre-funded capital"
                       />
                     </div>
                   )}
@@ -922,6 +1018,7 @@ export default function Simulation() {
                         max={0.50}
                         step={0.01}
                         suffix="%"
+                        description="Price drop percentage that triggers valid trading halt"
                       />
                       <p className="text-[10px] text-text-muted font-[family-name:var(--font-mono)]">
                         Trading halts if asset price drops {(circuitBreakerThreshold * 100).toFixed(0)}% from par
@@ -947,6 +1044,7 @@ export default function Simulation() {
                   min={0}
                   max={1}
                   suffix="%"
+                  description="Tax rate applied to brown asset holdings"
                 />
                 <Slider
                   label="Green Subsidy"
@@ -955,6 +1053,7 @@ export default function Simulation() {
                   min={0}
                   max={0.5}
                   suffix="%"
+                  description="Direct capital injection for green asset holdings"
                 />
 
                 <div className="border-t border-border pt-3">
@@ -975,6 +1074,7 @@ export default function Simulation() {
                       min={1}
                       max={50}
                       step={1}
+                      description="Multi-step cascade after transition shock"
                     />
                     <Slider
                       label="Shock Severity"
@@ -983,6 +1083,7 @@ export default function Simulation() {
                       min={0}
                       max={1}
                       suffix="%"
+                      description="Percentage devaluation of external assets during stress event"
                     />
                   </>
                 )}
@@ -1009,6 +1110,7 @@ export default function Simulation() {
                   onChange={setGameSolvency}
                   min={-0.05}
                   max={0.3}
+                  description="Fundamental asset quality (Morris-Shin fundamental)"
                 />
                 <Slider
                   label="Number of Agents"
@@ -1017,6 +1119,7 @@ export default function Simulation() {
                   min={5}
                   max={100}
                   step={1}
+                  description="Total participating banks in the strategic game"
                 />
                 <Slider
                   label="Time Steps"
@@ -1025,6 +1128,7 @@ export default function Simulation() {
                   min={2}
                   max={20}
                   step={1}
+                  description="Duration of the strategic rollover game"
                 />
 
                 <div className="border-t border-border pt-3 space-y-3">
@@ -1038,6 +1142,7 @@ export default function Simulation() {
                     min={0.01}
                     max={0.20}
                     step={0.01}
+                    description="Cost of borrowing for interbank loans"
                   />
                   <Slider
                     label="Recovery Rate (R)"
@@ -1046,6 +1151,7 @@ export default function Simulation() {
                     min={0.10}
                     max={0.80}
                     step={0.01}
+                    description="Fraction of exposure recovered upon counterparty default"
                   />
                   <Slider
                     label="Exposure / Bank ($B)"
@@ -1055,6 +1161,7 @@ export default function Simulation() {
                     max={50}
                     step={0.1}
                     suffix="B"
+                    description="Size of interbank loans between counterparties"
                   />
                 </div>
 
@@ -1069,6 +1176,7 @@ export default function Simulation() {
                     min={0.1}
                     max={3.0}
                     step={0.1}
+                    description="Agent sensitivity to variance in expected payoff"
                   />
                   <Slider
                     label="Private Noise (σ)"
@@ -1077,6 +1185,7 @@ export default function Simulation() {
                     min={0.01}
                     max={0.30}
                     step={0.01}
+                    description="Uncertainty in private signals about fundamental solvency"
                   />
                   <Slider
                     label="Fire-Sale Haircut"
@@ -1085,6 +1194,7 @@ export default function Simulation() {
                     min={0.05}
                     max={0.50}
                     step={0.01}
+                    description="Loss on collateral liquidation during distress"
                   />
                   <Slider
                     label="Margin Volatility"
@@ -1093,16 +1203,21 @@ export default function Simulation() {
                     min={0}
                     max={1}
                     step={0.01}
+                    description="Impact of price variance on margin requirements"
                   />
                 </div>
 
                 <div className="border-t border-border pt-3">
-                  <Toggle
-                    label="AI Transparency"
-                    checked={gameTransparent}
-                    onChange={setGameTransparent}
-                    description="Accurate public signal from GNN"
+                  <Slider
+                    label="Transparency (α)"
+                    value={gameAlpha}
+                    onChange={setGameAlpha}
+                    min={0.1}
+                    max={10.0}
+                    step={0.1}
+                    description="Precision of public signals (Scenario A vs B)"
                   />
+                  <p className="text-[10px] text-text-muted mt-1">Public signal precision</p>
                 </div>
 
                 <div className="glass rounded-lg p-3 text-[11px] text-text-muted">
@@ -1172,6 +1287,8 @@ export default function Simulation() {
                   <MetricCard
                     label="Defaults"
                     value={results.n_defaults ?? 0}
+                    delta={results.n_defaults - (prevResults?.n_defaults ?? results.n_defaults)}
+                    reversed={true}
                     prefix=""
                     suffix=""
                     color="text-crisis-red"
@@ -1179,6 +1296,8 @@ export default function Simulation() {
                   <MetricCard
                     label="Distressed"
                     value={results.n_distressed ?? 0}
+                    delta={results.n_distressed - (prevResults?.n_distressed ?? results.n_distressed)}
+                    reversed={true}
                     prefix=""
                     suffix=""
                     color="text-amber-warn"
@@ -1186,6 +1305,8 @@ export default function Simulation() {
                   <MetricCard
                     label="Capital Lost"
                     value={results.equity_loss ?? 0}
+                    delta={(results.equity_loss ?? 0) - (prevResults?.equity_loss ?? 0) === 0 ? 0 : (results.equity_loss ?? 0) - (prevResults?.equity_loss ?? 0)}
+                    reversed={true}
                     color="text-crisis-red"
                   />
                   <MetricCard
@@ -1197,6 +1318,12 @@ export default function Simulation() {
                             : `${(results.final_asset_price * 100).toFixed(1)}%`)
                         : "100%"
                     }
+                    delta={
+                      results.final_asset_price !== undefined 
+                      ? (results.final_asset_price * 100) - ((prevResults?.final_asset_price ?? results.final_asset_price) * 100)
+                      : 0
+                    }
+                    reversed={false}
                     prefix=""
                     suffix=""
                     color={
@@ -1400,52 +1527,113 @@ export default function Simulation() {
         )}
       </AnimatePresence>
 
-      {/* Top-right info badge + detail button */}
-      <div className="absolute top-20 right-4 z-20 flex flex-col gap-2 items-end">
-        <GlassPanel className="!p-3 flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute h-full w-full rounded-full bg-stability-green opacity-75" />
-              <span className="relative rounded-full h-2 w-2 bg-stability-green" />
-            </span>
-            <span className="text-[10px] font-[family-name:var(--font-mono)] text-text-muted uppercase tracking-wider">
-              {topology
-                ? `${topology.nodes?.length ?? 0} nodes · ${topology.links?.length ?? 0} edges`
-                : "Loading..."}
-            </span>
-          </div>
-          <button
-            onClick={() => setLiteMode((v) => !v)}
-            className={cn(
-              "ml-2 px-2.5 py-1 rounded-lg text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all border",
-              liteMode
-                ? "bg-stability-green/20 text-stability-green border-stability-green/40"
-                : "bg-white/5 text-text-muted border-border hover:border-text-muted"
-            )}
-          >
-            {liteMode ? "LITE ✓" : "LITE"}
-          </button>
-        </GlassPanel>
+      {/* Top-right info badge + detail button + Inspector */}
+      <div className="absolute top-20 right-4 z-20 flex flex-col gap-2 items-end pointer-events-none">
+        {/* Pointer events needs to be auto for children */}
+        <div className="pointer-events-auto flex flex-col gap-2 items-end">
+          <GlassPanel className="!p-3 flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute h-full w-full rounded-full bg-stability-green opacity-75" />
+                <span className="relative rounded-full h-2 w-2 bg-stability-green" />
+              </span>
+              <span className="text-[10px] font-[family-name:var(--font-mono)] text-text-muted uppercase tracking-wider">
+                {topology
+                  ? `${topology.nodes?.length ?? 0} nodes · ${topology.links?.length ?? 0} edges`
+                  : "Loading..."}
+              </span>
+            </div>
+            <button
+              onClick={() => setLiteMode((v) => !v)}
+              className={cn(
+                "ml-2 px-2.5 py-1 rounded-lg text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all border",
+                liteMode
+                  ? "bg-stability-green/20 text-stability-green border-stability-green/40"
+                  : "bg-white/5 text-text-muted border-border hover:border-text-muted"
+              )}
+            >
+              {liteMode ? "LITE ✓" : "LITE"}
+            </button>
+          </GlassPanel>
 
-        {/* Detailed Analysis Button */}
-        {results && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            onClick={() => {
-              setDetailOpen(true);
-              if (graphRef.current) graphRef.current.pauseRendering();
-            }}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border border-border-bright
-              hover:border-stability-green/40 hover:shadow-lg hover:shadow-stability-green/10
-              transition-all group cursor-pointer"
-          >
-            <Info className="h-4 w-4 text-stability-green group-hover:scale-110 transition-transform" />
-            <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-stability-green transition-colors">
-              DETAILED ANALYSIS
-            </span>
-          </motion.button>
-        )}
+          {/* Bank Inspector */}
+          <AnimatePresence>
+            {selectedNode && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="w-72"
+              >
+                <GlassPanel className="p-4 bg-void-panel border-white/10 backdrop-blur-2xl shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-stability-green to-data-blue opacity-50" />
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-white font-[family-name:var(--font-mono)]">
+                        {selectedNode.name?.length > 25 ? selectedNode.name.slice(0, 25) + "..." : selectedNode.name}
+                      </h3>
+                      <span className="text-[10px] uppercase tracking-wider text-text-muted bg-white/5 px-1.5 py-0.5 rounded mt-1 inline-block">
+                        {selectedNode.tier || "Unknown Tier"}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedNode(null)}
+                      className="text-text-muted hover:text-white transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+                    <div className="p-2 rounded bg-white/[0.03] border border-white/[0.05]">
+                      <span className="block text-[10px] text-text-muted uppercase">Assets</span>
+                      <span className="block font-mono text-white font-bold">{formatUSD(selectedNode.total_assets || 0)}</span>
+                    </div>
+                    <div className="p-2 rounded bg-white/[0.03] border border-white/[0.05]">
+                      <span className="block text-[10px] text-text-muted uppercase">Equity</span>
+                      <span className="block font-mono text-white font-bold">{formatUSD(selectedNode.total_equity || selectedNode.equity || 0)}</span>
+                    </div>
+                  </div>
+
+                  {results?.status && (
+                    <div className="border-t border-white/10 pt-3 flex justify-between items-center">
+                      <span className="text-[10px] text-text-muted uppercase tracking-wider">Simulation Status</span>
+                      <span className={cn(
+                        "text-xs font-bold px-2 py-0.5 rounded border",
+                        (results.status[selectedNode.id] === "Default" || gameStatusMap[selectedNode.id] === "WITHDRAW")
+                          ? "bg-crisis-red/20 text-crisis-red border-crisis-red/30"
+                          : (results.status[selectedNode.id] === "Distressed")
+                          ? "bg-amber-warn/20 text-amber-warn border-amber-warn/30"
+                          : "bg-stability-green/20 text-stability-green border-stability-green/30"
+                      )}>
+                        {gamePlaybackActive 
+                          ? (gameStatusMap[selectedNode.id] || "HOLD") 
+                          : (results.status[selectedNode.id] || "Healthy")}
+                      </span>
+                    </div>
+                  )}
+                </GlassPanel>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Detailed Analysis Button */}
+          {results && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onClick={() => {
+                setDetailOpen(true);
+                if (graphRef.current) graphRef.current.pauseRendering();
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border border-border-bright
+                hover:border-stability-green/40 hover:shadow-lg hover:shadow-stability-green/10
+                transition-all group cursor-pointer w-full justify-center"
+            >
+              <Info className="h-4 w-4 text-stability-green group-hover:scale-110 transition-transform" />
+              <span className="text-xs font-bold text-white tracking-wide">Analysis</span>
+            </motion.button>
+          )}
 
         {/* Replay/Stop Contagion Button */}
         {results && results.status && (
@@ -1526,6 +1714,7 @@ export default function Simulation() {
             </button>
           </motion.div>
         )}
+        </div>
       </div>
 
       {/* ── Detailed Analysis Modal ── */}

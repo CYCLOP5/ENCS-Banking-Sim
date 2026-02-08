@@ -133,6 +133,7 @@ class SimulationRequest(BaseModel):
     strategic_recovery_rate: float = Field(0.40, ge=0.10, le=0.80)
     strategic_risk_aversion: float = Field(1.0, ge=0.1, le=3.0)
     strategic_info_regime: str = Field("OPAQUE")  # "OPAQUE" or "TRANSPARENT"
+    strategic_alpha: float = Field(5.0, ge=0.01, le=100.0)  # Public signal precision
     # Circuit breaker
     circuit_breaker_enabled: bool = False
     circuit_breaker_threshold: float = Field(0.15, ge=0.01, le=0.50)
@@ -383,6 +384,7 @@ async def run_simulation(req: SimulationRequest):
                 recovery_rate=req.strategic_recovery_rate,
                 risk_aversion_mean=req.strategic_risk_aversion,
                 info_regime=req.strategic_info_regime,
+                public_precision=req.strategic_alpha,
             )
         elif req.use_intraday:
             results = sim.run_rust_intraday(

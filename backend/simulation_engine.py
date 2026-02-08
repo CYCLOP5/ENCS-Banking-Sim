@@ -617,6 +617,7 @@ def run_strategic_intraday_simulation(
     risk_aversion_mean: float = 1.0,
     risk_aversion_std: float = 0.3,
     info_regime: str = "OPAQUE",
+    public_precision: float = None,  # Explicit α override
     seed: int = 42,
 ) -> dict:
     """
@@ -664,9 +665,13 @@ def run_strategic_intraday_simulation(
         else 'Unknown'
     )
 
+
     # ── Signal precision (regime-dependent) ──────────────────────────────
     private_precision = 1.0 / (uncertainty_sigma ** 2)        # β
-    if info_regime == "TRANSPARENT":
+    
+    if public_precision is not None:
+        pass  # Use provided value
+    elif info_regime == "TRANSPARENT":
         public_precision = 100.0                               # α
     else:  # OPAQUE
         public_precision = 0.01                                # α ≈ 0
@@ -684,6 +689,7 @@ def run_strategic_intraday_simulation(
                 borrower_idx=j,
                 risk_aversion=lam,
                 exposure=W[i, j],
+                alpha=public_precision,  # Pass dynamic alpha
             )
 
     print(f"  Trigger:           {trigger_name}")
@@ -691,6 +697,7 @@ def run_strategic_intraday_simulation(
     print(f"  Time Steps:        {n_steps}")
     print(f"  σ (noise):         {uncertainty_sigma}")
     print(f"  α (fire-sale):     {alpha}")
+    print(f"  Public Prec (α):   {public_precision}")
     print(f"  Margin sens:       {margin_sensitivity}")
     print(f"  Info regime:       {info_regime}")
     print(f"  Edge agents:       {len(edge_agents)}")

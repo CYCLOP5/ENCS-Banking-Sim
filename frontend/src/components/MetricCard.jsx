@@ -11,6 +11,7 @@ export default function MetricCard({
   suffix,
   color = "text-stability-green",
   className,
+  reversed = false, // If true, positive delta is BAD (Red), negative is GOOD (Green). Default false means Green up.
 }) {
   const nValue = Number(value);
   const isCurrency =
@@ -31,25 +32,29 @@ export default function MetricCard({
       <span className="text-[11px] font-medium uppercase tracking-widest text-text-muted font-[family-name:var(--font-mono)]">
         {label}
       </span>
-      <span
-        className={cn(
-          "text-2xl font-bold tracking-tight font-[family-name:var(--font-mono)]",
-          color
-        )}
-      >
-        {displayVal}
-      </span>
-      {delta !== undefined && (
+      <div className="flex items-baseline gap-2">
         <span
           className={cn(
-            "text-xs font-[family-name:var(--font-mono)]",
-            delta >= 0 ? "text-crisis-red" : "text-stability-green"
+            "text-2xl font-bold tracking-tight font-[family-name:var(--font-mono)]",
+            color
           )}
         >
-          {delta >= 0 ? "+" : ""}
-          {typeof delta === "number" ? delta.toFixed(1) : delta}%
+          {displayVal}
         </span>
-      )}
+        {delta !== undefined && delta !== 0 && (
+          <span
+            className={cn(
+              "text-xs font-[family-name:var(--font-mono)]",
+              (delta > 0 && reversed) || (delta < 0 && !reversed) 
+                ? "text-crisis-red" 
+                : "text-stability-green"
+            )}
+          >
+            {delta > 0 ? "↑" : "↓"} {Math.abs(delta).toFixed(typeof delta === 'number' && Number.isInteger(delta) ? 0 : 1)}
+            {label.includes("Loss") || label.includes("%") ? "%" : ""}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
