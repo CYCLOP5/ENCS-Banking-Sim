@@ -191,6 +191,19 @@ const SCENARIOS = {
     label: "Crypto Winter (High Vol)",
     description: "Extreme volatility & unmoored valuations",
     params: { severity: 0.10, sigma: 0.25, fireSaleAlpha: 0.04, panicRate: 0.20, useIntraday: true }
+  },
+  "RESILIENT_DEMO": {
+    label: "Resilient System (Demo)",
+    description: "Strong CCP buffer & lower fire-sale impact prevents total collapse",
+    params: { 
+      severity: 0.40, 
+      panicRate: 0.05, 
+      sigma: 0.05, 
+      fireSaleAlpha: 0.001, 
+      defaultFundRatio: 0.15, 
+      useCcp: true, 
+      useIntraday: true 
+    }
   }
 };
 
@@ -237,7 +250,7 @@ export default function Simulation() {
   const [severity, setSeverity] = useState(1.0);
   const [nSteps, setNSteps] = useState(10);
   const [panicRate, setPanicRate] = useState(0.1);
-  const [fireSaleAlpha, setFireSaleAlpha] = useState(0.005);
+  const [fireSaleAlpha, setFireSaleAlpha] = useState(0.002);
   const [useCcp, setUseCcp] = useState(false);
   const [clearingRate, setClearingRate] = useState(0.5);
   const [maxIter, setMaxIter] = useState(100);
@@ -278,6 +291,9 @@ export default function Simulation() {
     if (s.params.marginMultiplier !== undefined) setMarginMultiplier(s.params.marginMultiplier);
     if (s.params.nSteps !== undefined) setNSteps(s.params.nSteps);
     if (s.params.useIntraday !== undefined) setUseIntraday(s.params.useIntraday);
+    if (s.params.useCcp !== undefined) setUseCcp(s.params.useCcp);
+    if (s.params.clearingRate !== undefined) setClearingRate(s.params.clearingRate);
+    if (s.params.defaultFundRatio !== undefined) setDefaultFundRatio(s.params.defaultFundRatio);
   };
 
   // ── Load topology + bank list ──
