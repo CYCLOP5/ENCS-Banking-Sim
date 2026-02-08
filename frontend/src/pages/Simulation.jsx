@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, startTransition } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Play,
@@ -269,6 +269,25 @@ export default function Simulation() {
     statusArray.forEach((s, i) => { map[i] = s; });
     return map;
   }, [statusArray]);
+
+  // ── Unified tab-switch handler ──
+  // Stops animations & physics synchronously, then defers the heavy state
+  // updates (setResults → enriched recompute) via startTransition so the
+  // browser stays responsive during the graph teardown.
+  const switchTab = useCallback((newTab) => {
+    if (tab === newTab) return;
+    // 1. Stop running animations (clears timers — side-effect, not deferred)
+    stopContagion();
+    stopGamePlayback();
+    // 2. Freeze the force simulation *before* clearing data to prevent
+    //    the engine from trying to re-layout during the transition.
+    graphRef.current?.stopPhysics();
+    // 3. Defer expensive state updates so the tab highlight can paint first
+    startTransition(() => {
+      setResults(null);
+      setTab(newTab);
+    });
+  }, [tab, stopContagion, stopGamePlayback]);
 
   // ── Stop contagion animation ──
   const stopContagion = useCallback(() => {
@@ -682,19 +701,19 @@ export default function Simulation() {
           <div className="flex gap-1.5 flex-wrap">
             <TabBtn
               active={tab === "mechanical"}
-              onClick={() => { if (tab !== "mechanical") { stopContagion(); stopGamePlayback(); setResults(null); } setTab("mechanical"); }}
+              onClick={() => switchTab("mechanical")}
               icon={Settings}
               label="Mechanical"
             />
             <TabBtn
               active={tab === "strategic"}
-              onClick={() => { if (tab !== "strategic") { stopContagion(); stopGamePlayback(); setResults(null); } setTab("strategic"); }}
+              onClick={() => switchTab("strategic")}
               icon={Gamepad2}
               label="Strategic"
             />
             <TabBtn
               active={tab === "climate"}
-              onClick={() => { if (tab !== "climate") { stopContagion(); stopGamePlayback(); setResults(null); } setTab("climate"); }}
+              onClick={() => switchTab("climate")}
               icon={CloudLightning}
               label="Climate"
             />

@@ -171,6 +171,24 @@ export default function Methodology() {
               </p>
             </div>
 
+            <div className="mt-6 glass rounded-lg p-4 border border-neon-purple/10">
+              <h4 className="text-sm font-bold text-neon-purple font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
+                CCP Skin-in-the-Game
+              </h4>
+              <p className="text-text-secondary text-sm leading-relaxed mb-3">
+                When central clearing is enabled, the CCP Default Fund is <b className="text-white">not conjured from thin air</b>.
+                Each member bank pre-pledges <b className="text-white">a pro-rata share</b> of the fund, which is deducted from
+                their equity and total assets up-front:
+              </p>
+              <TexBlock>
+                {"\\text{cost}_i = \\frac{E_{\\text{CCP}}}{N}, \\quad A_i \\leftarrow A_i - \\text{cost}_i, \\quad E_i \\leftarrow E_i - \\text{cost}_i"}
+              </TexBlock>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                This ensures <b className="text-stability-green">conservation of money</b> — the CCP
+                is capitalised by the banks it protects, not by fictional equity.
+              </p>
+            </div>
+
             <div className="mt-6 glass rounded-lg p-4 border border-amber-500/10">
               <h4 className="text-sm font-bold text-amber-400 font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3 flex items-center gap-2">
                 <ShieldAlert className="h-4 w-4" /> Circuit Breaker (Trading Halt)
@@ -283,24 +301,29 @@ export default function Methodology() {
             <SectionHead
               icon={Gamepad2}
               label="Layer 3 — Strategic"
-              title="Morris & Shin Global Games"
+              title="Networked Bayesian Coordination Game"
               color="purple"
             />
 
             <p className="text-text-secondary leading-relaxed mb-4">
-              Banks decide to <b className="text-white">Roll Over</b> (stay) or{" "}
-              <b className="text-white">Withdraw</b> (run) based on expected
-              utility:
+              Unlike classical Morris &amp; Shin (1998) where each <em>bank</em> makes a
+              single roll-over/withdraw decision, ENCS assigns a{" "}
+              <b className="text-white">per-edge Bayesian agent</b> to every directed
+              interbank exposure <Tex>{"(i \\to j)"}</Tex>. Each agent independently
+              decides whether lender <Tex>{"i"}</Tex> should{" "}
+              <b className="text-white">Roll Over</b> (stay) or{" "}
+              <b className="text-white">Withdraw</b> (run) on its exposure to
+              borrower <Tex>{"j"}</Tex>, based on expected utility:
             </p>
 
-            <TexBlock>{"U_i = \\mathbb{E}[\\text{Return}] - \\lambda_i \\cdot \\text{Risk}"}</TexBlock>
+            <TexBlock>{"U_{i \\to j} = \\mathbb{E}[\\text{Return}] - \\lambda^{\\text{eff}}_i \\cdot \\text{Risk}"}</TexBlock>
 
             <div className="glass rounded-lg p-4 mb-4 text-sm">
-              <p className="text-text-secondary mb-2">Concretely, the engine evaluates two payoffs per agent per step:</p>
+              <p className="text-text-secondary mb-2">Concretely, the engine evaluates two payoffs per edge-agent per step:</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="glass rounded p-3">
                   <span className="text-stability-green font-[family-name:var(--font-mono)] text-xs">Roll Over</span>
-                  <TexBlock>{"U_{\\text{stay}} = (1-p)(1+r) + pR - \\lambda\\sigma"}</TexBlock>
+                  <TexBlock>{"U_{\\text{stay}} = (1-p)(1+r) + pR - \\lambda^{\\text{eff}}\\sigma"}</TexBlock>
                 </div>
                 <div className="glass rounded p-3">
                   <span className="text-crisis-red font-[family-name:var(--font-mono)] text-xs">Withdraw</span>
@@ -315,16 +338,38 @@ export default function Methodology() {
               </p>
             </div>
 
+            <div className="glass rounded-lg p-4 mb-6 border border-neon-purple/10">
+              <h4 className="text-sm font-bold text-neon-purple font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
+                Dynamic Risk Aversion
+              </h4>
+              <p className="text-text-secondary text-sm leading-relaxed mb-3">
+                Risk aversion <Tex>{"\\lambda"}</Tex> is <b className="text-white">not fixed</b>.
+                As a bank&rsquo;s equity erodes during the crisis, its effective risk
+                aversion rises — capturing the empirical observation that distressed
+                institutions become increasingly conservative and prone to hoarding:
+              </p>
+              <TexBlock>
+                {"\\lambda^{\\text{eff}}_i = \\lambda_{\\text{base}} \\cdot \\left(1 + \\alpha \\cdot \\frac{E_i^0 - E_i^{(t)}}{E_i^0}\\right)"}
+              </TexBlock>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                Where <Tex>{"\\alpha = 2"}</Tex> is the amplification factor and{" "}
+                <Tex>{"E_i^0"}</Tex> is initial equity. A bank that has lost 50% of
+                its equity will have <Tex>{"\\lambda^{\\text{eff}} = 2\\lambda"}</Tex>,
+                making it twice as likely to withdraw — accelerating the cascade.
+              </p>
+            </div>
+
             <p className="text-text-secondary leading-relaxed mb-4">
-              Each agent receives a <b className="text-white">private signal</b>{" "}
-              <Tex>{"x_i = \\theta + \\varepsilon_i"}</Tex> and a{" "}
-              <b className="text-white">public signal</b> <Tex>{"y"}</Tex>. The
-              Bayesian posterior for the true state <Tex>{"\\theta"}</Tex>:
+              Each edge-agent receives a <b className="text-white">private signal</b>{" "}
+              <Tex>{"x_{ij} = \\theta_j + \\varepsilon_{ij}"}</Tex> about the
+              borrower&rsquo;s true state, and a{" "}
+              <b className="text-white">public signal</b> <Tex>{"y"}</Tex> (from the GNN
+              risk layer). The Bayesian posterior for <Tex>{"\\theta_j"}</Tex>:
             </p>
 
             <TexBlock>
               {
-                "\\mu_{\\text{post}} = \\frac{\\alpha \\cdot y + \\beta \\cdot x_i}{\\alpha + \\beta}, \\quad \\sigma^2_{\\text{post}} = \\frac{1}{\\alpha + \\beta}"
+                "\\mu_{\\text{post}} = \\frac{\\alpha \\cdot y + \\beta \\cdot x_{ij}}{\\alpha + \\beta}, \\quad \\sigma^2_{\\text{post}} = \\frac{1}{\\alpha + \\beta}"
               }
             </TexBlock>
 
@@ -335,7 +380,7 @@ export default function Methodology() {
 
             <TexBlock>
               {
-                "P(\\theta < 0) = \\Phi\\!\\left(\\frac{-\\mu_{\\text{post}}}{\\sigma_{\\text{post}}}\\right)"
+                "P(\\theta_j < 0) = \\Phi\\!\\left(\\frac{-\\mu_{\\text{post}}}{\\sigma_{\\text{post}}}\\right)"
               }
             </TexBlock>
 
@@ -345,7 +390,7 @@ export default function Methodology() {
                   Opaque Regime
                 </p>
                 <p className="text-text-secondary text-sm">
-                  Public signal uninformative → agents rely on noisy private
+                  Public signal uninformative → edge-agents rely on noisy private
                   signals → coordination failure → self-fulfilling panics.
                 </p>
               </div>
@@ -360,12 +405,12 @@ export default function Methodology() {
               </div>
             </div>
 
-            <div className="mt-6 glass rounded-lg p-4 border border-neon-purple/10">
-              <h4 className="text-sm font-bold text-neon-purple font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
+            <div className="mt-6 glass rounded-lg p-4 border border-crisis-red/10">
+              <h4 className="text-sm font-bold text-crisis-red font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
                 Self-Fulfilling Feedback Loop
               </h4>
               <p className="text-text-secondary text-sm leading-relaxed">
-                Aggregate withdrawals trigger <b className="text-white">fire-sale losses</b>{" "}
+                Aggregate edge-level withdrawals trigger <b className="text-white">fire-sale losses</b>{" "}
                 that degrade the effective solvency signal seen by all agents at the
                 next time-step:
               </p>
@@ -374,9 +419,23 @@ export default function Methodology() {
               </TexBlock>
               <p className="text-text-secondary text-sm leading-relaxed">
                 This creates a <b className="text-crisis-red">self-reinforcing death spiral</b>:
-                runs erode asset value → signals worsen → more agents withdraw → further
-                losses. The transparent regime breaks this cycle by anchoring beliefs
-                before the loop can take hold.
+                runs erode asset value → signals worsen → dynamic{" "}
+                <Tex>{"\\lambda^{\\text{eff}}"}</Tex> escalates → more agents
+                withdraw → further losses. The transparent regime breaks this cycle
+                by anchoring beliefs before the loop can take hold.
+              </p>
+            </div>
+
+            <div className="mt-6 glass rounded-lg p-4 border border-amber-500/10">
+              <h4 className="text-sm font-bold text-amber-400 font-[family-name:var(--font-mono)] uppercase tracking-wider mb-3">
+                Conservation of Money
+              </h4>
+              <p className="text-text-secondary text-sm leading-relaxed">
+                Margin call shortfalls — when a bank cannot meet its variation margin
+                obligation — are tracked as <b className="text-white">systemic credit losses</b>{" "}
+                rather than being added to fire-sale volume. This ensures that
+                unfunded obligations are correctly accounted as a credit event, not
+                as phantom liquidation pressure that would violate conservation.
               </p>
             </div>
           </GlassPanel>

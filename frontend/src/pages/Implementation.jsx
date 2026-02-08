@@ -410,13 +410,14 @@ export default function Implementation() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="p-4 bg-white/5 rounded-lg border border-white/10">
-                <h4 className="font-mono text-sm text-data-blue mb-2">CCP Hub-and-Spoke</h4>
+                <h4 className="font-mono text-sm text-data-blue mb-2">CCP Hub-and-Spoke (Skin-in-the-Game)</h4>
                 <p className="text-sm text-text-secondary leading-relaxed">
                   The engine can dynamically convert bilateral interbank networks
                   into a <strong className="text-white">Central Counterparty (CCP)</strong>{" "}
-                  configuration — replacing pair-wise exposures with a single
-                  hub-and-spoke topology to evaluate the systemic impact of central
-                  clearing mandates.
+                  configuration. The CCP Default Fund is funded by{" "}
+                  <strong className="text-white">pro-rata deductions</strong> from each
+                  member bank&rsquo;s equity — ensuring conservation of money rather
+                  than conjuring capital from thin air.
                 </p>
               </div>
               <div className="p-4 bg-white/5 rounded-lg border border-white/10">
@@ -522,13 +523,33 @@ if asset_price <= cb_floor:
               <GlassPanel>
                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                     <Zap className="w-5 h-5 text-amber-warn" />
-                    Layer 4: Strategic Default (Game Theory)
+                    Layer 4: Networked Bayesian Coordination Game
                  </h3>
                  <p className="text-text-secondary mb-4">
-                    Beyond mechanical default, we model <strong>Panic Runs</strong> using 
-                    Morris & Shin (1998) Global Games. Banks receive noisy signals 
-                    about counterparty solvency:
+                    Beyond mechanical default, we model <strong>Panic Runs</strong> using
+                    a per-edge extension of Morris &amp; Shin (1998) Global Games. An{" "}
+                    <strong>EdgeStrategicAgent</strong> is instantiated for every directed
+                    interbank exposure — each independently deciding whether to roll over
+                    or withdraw based on Bayesian posteriors about the borrower.
                  </p>
+
+                 <div className="p-4 bg-white/5 rounded-lg border border-white/10 mb-4">
+                    <h4 className="font-mono text-sm text-neon-purple mb-2">Dynamic Risk Aversion</h4>
+                    <p className="text-sm text-text-secondary mb-2">
+                       Risk aversion scales with equity depletion during the crisis:
+                    </p>
+                    <div className="py-2 overflow-x-auto">
+                       <Tex display>
+                          \lambda^\text&#123;eff&#125;_i = \lambda_\text&#123;base&#125; \cdot (1 + 2 \cdot \text&#123;equity\_loss\_ratio&#125;_i)
+                       </Tex>
+                    </div>
+                    <p className="text-xs text-text-muted">
+                       A bank that has lost 50% of equity doubles its effective risk
+                       aversion — capturing the empirical observation that distressed
+                       institutions become increasingly prone to hoarding.
+                    </p>
+                 </div>
+
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="p-4 bg-white/5 rounded border border-white/10">
                        <h4 className="font-mono text-sm text-amber-warn mb-2">Scenario A: Opaque</h4>
@@ -536,8 +557,8 @@ if asset_price <= cb_floor:
                           Noisy public signal (<Tex>\alpha \approx 0</Tex>).
                        </p>
                        <p className="text-sm">
-                          Banks rely on private signals. Coordination failure leads to 
-                          <strong> precautionary runs</strong> even on solvent banks.
+                          Edge-agents rely on private signals. Coordination failure leads to
+                          <strong> precautionary runs</strong> even on solvent counterparties.
                        </p>
                     </div>
                     <div className="p-4 bg-white/5 rounded border border-white/10">
@@ -546,10 +567,20 @@ if asset_price <= cb_floor:
                           High precision signal (<Tex>\alpha \to \infty</Tex>).
                        </p>
                        <p className="text-sm">
-                          AI-driven transparency anchors expectations. 
-                          <strong>Run rate drops</strong> as banks coordinate on fundamentals.
+                          AI-driven transparency anchors expectations.
+                          <strong> Run rate drops</strong> as edge-agents coordinate on fundamentals.
                        </p>
                     </div>
+                 </div>
+
+                 <div className="mt-4 p-4 bg-white/5 rounded-lg border border-white/10">
+                    <h4 className="font-mono text-sm text-crisis-red mb-2">Conservation of Money</h4>
+                    <p className="text-sm text-text-secondary">
+                       Margin call shortfalls are tracked as{" "}
+                       <strong>systemic credit losses</strong> (a separate accounting line)
+                       rather than being added to fire-sale volume. This prevents phantom
+                       liquidation pressure from violating money conservation.
+                    </p>
                  </div>
               </GlassPanel>
 

@@ -104,16 +104,20 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
   const enriched = useMemo(() => {
     if (!graphData) return { nodes: [], links: [] };
 
-    // Deep clone to prevent force-graph from mutating source data in-place
-    let rawNodes = structuredClone(graphData.nodes);
-    let rawLinks = structuredClone(graphData.links);
-
+    // PERF: No structuredClone. Filter *first* on source refs, then shallow-copy
+    // only the nodes/links that will actually be rendered.  Complexity drops from
+    // O(TotalNodes) deep-clone → O(RenderedNodes) shallow-copy.
+    const allNodes = graphData.nodes;
+    const allLinks = graphData.links;
     const hasStatus = Object.keys(statusMap).length > 0;
+
+    let pickedNodes; // still references into graphData — no copies yet
+    let kept;        // Set<nodeId> of nodes to keep
 
     // After simulation: hard-cap to NODE_HARD_CAP, prioritizing Default > Distressed > Safe
     if (hasStatus) {
       const defaults = [], distressed = [], safe = [];
-      for (const n of rawNodes) {
+      for (const n of allNodes) {
         const st = statusMap[n.id];
         if (st === "Default") defaults.push(n);
         else if (st === "Distressed") distressed.push(n);
@@ -122,31 +126,38 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       const byAssets = (a, b) => (b.total_assets || 0) - (a.total_assets || 0);
       defaults.sort(byAssets); distressed.sort(byAssets); safe.sort(byAssets);
 
-      const picked = [];
-      picked.push(...defaults.slice(0, NODE_HARD_CAP));
-      const r1 = NODE_HARD_CAP - picked.length;
-      if (r1 > 0) picked.push(...distressed.slice(0, r1));
-      const r2 = NODE_HARD_CAP - picked.length;
-      if (r2 > 0) picked.push(...safe.slice(0, r2));
+      const bucket = [];
+      bucket.push(...defaults.slice(0, NODE_HARD_CAP));
+      const r1 = NODE_HARD_CAP - bucket.length;
+      if (r1 > 0) bucket.push(...distressed.slice(0, r1));
+      const r2 = NODE_HARD_CAP - bucket.length;
+      if (r2 > 0) bucket.push(...safe.slice(0, r2));
 
-      const kept = new Set(picked.map((n) => n.id));
-      rawNodes = picked;
-      rawLinks = rawLinks.filter(
-        (l) => kept.has(l.source?.id ?? l.source) && kept.has(l.target?.id ?? l.target)
-      );
+      kept = new Set(bucket.map((n) => n.id));
+      pickedNodes = bucket;
     }
     // Pre-simulation lite mode
-    else if (maxNodes < rawNodes.length) {
-      const sorted = [...rawNodes].sort((a, b) => (b.total_assets || 0) - (a.total_assets || 0));
-      const kept = new Set(sorted.slice(0, maxNodes).map((n) => n.id));
-      rawNodes = sorted.slice(0, maxNodes);
-      rawLinks = rawLinks.filter(
-        (l) => kept.has(l.source?.id ?? l.source) && kept.has(l.target?.id ?? l.target)
-      );
+    else if (maxNodes < allNodes.length) {
+      const sorted = [...allNodes].sort((a, b) => (b.total_assets || 0) - (a.total_assets || 0));
+      pickedNodes = sorted.slice(0, maxNodes);
+      kept = new Set(pickedNodes.map((n) => n.id));
+    }
+    // No filtering needed — render everything
+    else {
+      pickedNodes = allNodes;
+      kept = null; // signal: keep all links
     }
 
-    // Assign base colour/size (non-contagion state)
-    const nodes = rawNodes.map((n) => {
+    // Filter links (only when a node subset was selected)
+    const filteredLinks = kept
+      ? allLinks.filter(
+          (l) => kept.has(l.source?.id ?? l.source) && kept.has(l.target?.id ?? l.target)
+        )
+      : allLinks;
+
+    // Shallow-copy only the nodes that survived filtering and enrich with colour/size.
+    // Shallow copy is required because react-force-graph mutates node objects (x,y,z,vx…).
+    const nodes = pickedNodes.map((n) => {
       const val = Math.max(Math.log10(n.total_assets || 1e9) - 8, 0.8);
       let color;
       if (n.region === "Global") color = STATUS_COLORS.CCP;
@@ -156,10 +167,13 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       return { ...n, color, val, _baseVal: val, _opacity: 0.9, _emissiveIntensity: 0.25 };
     });
 
+    // Shallow-copy links for the same mutation-safety reason
+    const links = filteredLinks.map((l) => ({ ...l }));
+
     // Clear mesh cache — new enriched data means ForceGraph will re-create nodes
     meshCacheRef.current.clear();
 
-    return { nodes, links: rawLinks };
+    return { nodes, links };
   }, [graphData, statusMap, maxNodes]);
 
   /* ═══════════════════════════════════════════════════════════════════════
@@ -369,6 +383,7 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
     if (!fg || !mounted || enriched.nodes.length === 0) return;
 
     // Use a small timeout to allow internal graph initialization
+    let zoomTimer = null;
     const timer = setTimeout(() => {
       const fgInstance = fgRef.current;
       if (!fgInstance || typeof fgInstance.d3ReheatSimulation !== 'function') return;
@@ -398,13 +413,13 @@ const NetworkGraph3D = forwardRef(function NetworkGraph3D({
       }
       
       // Zoom to fit after layout settles
-      setTimeout(() => {
+      zoomTimer = setTimeout(() => {
           if (fgRef.current) fgRef.current.zoomToFit(600, 80);
       }, 1200);
 
     }, 10);
 
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); clearTimeout(zoomTimer); };
   }, [mounted, enriched]);
 
   /* ── Particle filter (top 150 links by value) ── */

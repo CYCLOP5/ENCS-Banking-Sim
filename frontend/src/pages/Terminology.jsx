@@ -93,10 +93,10 @@ const TERMS = [
     category: "Topology",
     icon: Shield,
     simple:
-      'A "Super-Bank" that sits in the middle of everyone. If Bank A fails, the CCP absorbs the hit so Bank B stays safe. It\'s a financial firewall.',
+      'A "Super-Bank" that sits in the middle of everyone. If Bank A fails, the CCP absorbs the hit so Bank B stays safe. Its Default Fund is pre-pledged by member banks — not conjured from thin air.',
     technical:
-      "Transforms the N×N bilateral topology into a Hub-and-Spoke graph. The CCP holds a Default Fund funded by member margins to absorb shockwaves. Reduces systemic interconnectedness at the cost of concentrated risk.",
-    math: "W_{\\text{CCP}} = \\sum_{i} m_i \\cdot r_{\\text{default\\_fund}}",
+      "Transforms the N×N bilateral topology into a Hub-and-Spoke graph. The CCP holds a Default Fund funded by pro-rata equity deductions from member banks, ensuring conservation of money. Each bank pays cost_i = E_CCP / N.",
+    math: "\\text{cost}_i = \\frac{E_{\\text{CCP}}}{N}, \\quad A_i \\leftarrow A_i - \\text{cost}_i",
   },
   {
     id: "gnn",
@@ -117,7 +117,7 @@ const TERMS = [
     simple:
       "A self-fulfilling prophecy. Even if a bank is healthy, if everyone thinks others will pull money out, they all pull out, and the bank dies.",
     technical:
-      "A global game where agents receive noisy signals about solvency. If the signal is below a threshold x*, the dominant strategy is to Withdraw, causing a coordination failure and liquidity collapse.",
+      "A global game where per-edge agents receive noisy signals about counterparty solvency. ENCS extends the classical model by assigning an independent Bayesian agent to each directed interbank exposure, enabling heterogeneous beliefs across the network.",
     math: "x^* = \\theta^* + \\sigma \\Phi^{-1}\\!\\left(\\frac{\\theta^* - c}{\\theta^*}\\right)",
   },
   {
@@ -126,9 +126,9 @@ const TERMS = [
     category: "Climate",
     icon: CloudLightning,
     simple:
-      'A sudden climate disaster (or Carbon Tax) that makes "safe" fossil-fuel assets worthless overnight — the climate version of a Black Swan.',
+      'A sudden climate disaster (or Carbon Tax) that makes "safe" fossil-fuel assets worthless overnight — the climate version of a Black Swan. Named by Bolton et al. (2020, BIS).',
     technical:
-      'A "Climate Value-at-Risk" (CVaR) shock applied to the external_assets vector. It specifically penalizes banks with high carbon-intensity scores, creating stranded assets.',
+      'A "Climate Value-at-Risk" (CVaR) shock applied to the external_assets vector. Unlike a Black Swan (unpredictable), Green Swans are foreseeable but ignored — creating stranded assets when regulatory or physical tipping points arrive. Bolton, Despres, Pereira da Silva, Samama & Svartzman (2020).',
     math: "\\Delta e_i = -0.20\\cdot A_i \\cdot c_i \\cdot \\tau + 0.15\\cdot A_i \\cdot (1-c_i) \\cdot s",
   },
   {
@@ -306,6 +306,50 @@ const TERMS = [
     technical:
       "A hard halt mechanism that freezes all liquidations, margin calls, and fire-sale activity when the global asset price drops below a configurable floor (e.g. 15% from par). Implemented in both the Rust core and Python fallback engines. Remaining intraday steps record zero volume, preserving the halted state in timeline data.",
     math: "P_t \\leq P_0(1 - \\delta_{\\text{CB}}) \\;\\Longrightarrow\\; V_{t'} = 0 \\;\\forall\\, t' \\geq t",
+  },
+  {
+    id: "dynamic-risk-aversion",
+    title: "Dynamic Risk Aversion",
+    category: "Game Theory",
+    icon: Users,
+    simple:
+      "As a bank loses money, it becomes more scared and starts hoarding cash — making the crisis worse. The more you lose, the more paranoid you become.",
+    technical:
+      "Risk aversion λ scales dynamically with equity depletion during the crisis. A bank that has lost 50% of equity doubles its effective risk aversion, making it twice as likely to withdraw from counterparty exposures.",
+    math: "\\lambda^{\\text{eff}}_i = \\lambda_{\\text{base}} \\cdot \\left(1 + 2 \\cdot \\frac{E_i^0 - E_i^{(t)}}{E_i^0}\\right)",
+  },
+  {
+    id: "liquidity-hoarding",
+    title: "Liquidity Hoarding",
+    category: "Game Theory",
+    icon: Banknote,
+    simple:
+      "When banks get scared, they stop lending and hoard cash — even if the borrower is healthy. Fear, not insolvency, freezes the entire system.",
+    technical:
+      "A precautionary behaviour where solvent banks withdraw interbank credit due to elevated uncertainty about counterparty health. In ENCS, hoarding emerges endogenously from the per-edge Bayesian agents: as dynamic λ rises and signals degrade, healthy lenders preemptively cut exposure.",
+    math: "U_{\\text{withdraw}} > U_{\\text{rollover}} \\;\\Longrightarrow\\; \\text{HOARD}",
+  },
+  {
+    id: "edge-strategic-agent",
+    title: "Edge Strategic Agent",
+    category: "Game Theory",
+    icon: Network,
+    simple:
+      "Instead of each bank making one big decision, every individual loan between two banks has its own mini-brain that decides whether to stay or flee.",
+    technical:
+      "A per-edge Bayesian decision-maker assigned to each directed interbank exposure (i→j). Each agent maintains independent beliefs about the borrower's solvency, receives private + public signals, and computes utility with dynamic risk aversion. This is a more granular extension of classical Morris-Shin.",
+    math: "P(\\theta_j < 0) = \\Phi\\!\\left(\\frac{-\\mu_{\\text{post}}}{\\sigma_{\\text{post}}}\\right)",
+  },
+  {
+    id: "systemic-credit-loss",
+    title: "Systemic Credit Loss",
+    category: "Physics",
+    icon: AlertTriangle,
+    simple:
+      "When a bank can't pay its margin call, that missing money is a debt that evaporates — it doesn't crash asset prices, it just disappears as a bad debt.",
+    technical:
+      "Margin call shortfalls that cannot be met from external assets. Tracked separately from fire-sale volume to preserve conservation of money. Unlike liquidated assets (which depress prices), credit losses represent defaulted obligations that are written off.",
+    math: "\\text{SCL} = \\sum_i \\max(0,\\; M_i - A_i^{\\text{ext}})",
   },
 ];
 

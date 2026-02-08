@@ -115,9 +115,11 @@ class StrategicBankAgent:
         interest_rate: float = 0.05,
         recovery_rate: float = 0.40,
         margin_pressure: float = 0.0,
+        current_equity: float | None = None,
+        initial_equity: float | None = None,
     ) -> Tuple[str, float, float]:
         """
-        Expected-utility comparison:
+        Expected-utility comparison with **dynamic risk aversion**.
 
         Payoffs
         -------
@@ -125,9 +127,22 @@ class StrategicBankAgent:
         Stay & default  →  R       (recovery, R < 1)
         Withdraw (run)  →  1.0     (safe, get principal back)
 
+        Dynamic λ
+        ---------
+        As a bank's equity depletes, it becomes more risk-averse
+        (liquidity hoarding).  If ``current_equity`` and
+        ``initial_equity`` are supplied:
+
+            equity_loss_ratio = 1 − current / initial   ∈ [0, 1]
+            λ_eff = λ_base · (1 + 2 · equity_loss_ratio)
+
+        When equity is intact  → λ_eff = λ_base  (no change).
+        When 50 % lost         → λ_eff = 2 · λ_base  (twice as cautious).
+        When fully wiped out   → λ_eff = 3 · λ_base  (maximum hoarding).
+
         Utility
         -------
-        U_stay = E[Return_stay] − λ · σ(Return_stay)
+        U_stay = E[Return_stay] − λ_eff · σ(Return_stay)
         U_run  = 1.0 + margin_pressure
 
         margin_pressure captures the liquidity premium when the CCP
@@ -135,6 +150,13 @@ class StrategicBankAgent:
 
         Returns (decision, U_stay, U_run)
         """
+        # ── Dynamic risk aversion ──────────────────────────────────────
+        if current_equity is not None and initial_equity is not None and initial_equity > 0:
+            equity_loss_ratio = max(0.0, min(1.0, 1.0 - current_equity / initial_equity))
+            effective_lambda = self.risk_aversion * (1.0 + 2.0 * equity_loss_ratio)
+        else:
+            effective_lambda = self.risk_aversion
+
         # Expected return from rolling over
         e_return_stay = (
             (1.0 - p_default) * (1.0 + interest_rate)
@@ -146,14 +168,104 @@ class StrategicBankAgent:
         variance_stay = p_default * (1.0 - p_default) * spread ** 2
         risk_stay = np.sqrt(variance_stay)
 
-        # Risk-adjusted utility
-        U_stay = e_return_stay - self.risk_aversion * risk_stay
+        # Risk-adjusted utility (uses dynamic λ)
+        U_stay = e_return_stay - effective_lambda * risk_stay
 
         # Safe exit  +  liquidity premium from margin pressure
         U_run = 1.0 + margin_pressure
 
         decision = "WITHDRAW" if U_run > U_stay else "ROLL_OVER"
         return decision, float(U_stay), float(U_run)
+
+
+# ---------------------------------------------------------------------------
+# Edge-level agent  (one per directed lending relationship A → B)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EdgeStrategicAgent:
+    """
+    Per-edge Bayesian decision maker for the network intraday engine.
+
+    Bank A might trust Bank B but panic about Bank C, so the withdrawal
+    decision must be made *per directed edge* (A→B), not per bank.
+
+    Each edge-agent reuses the same Morris & Shin (1998) math that
+    :class:`StrategicBankAgent` uses — Bayesian posterior + expected-
+    utility comparison — but is parameterised by the specific bilateral
+    exposure ``W[lender, borrower]``.
+
+    Attributes
+    ----------
+    lender_idx   : index of the creditor node in the topology
+    borrower_idx : index of the debtor node in the topology
+    risk_aversion: λ — drawn once at construction, heterogeneous
+    exposure     : current $ value of the directed claim  W[i, j]
+    """
+
+    lender_idx:   int
+    borrower_idx: int
+    risk_aversion: float
+    exposure:      float            # W[lender, borrower]
+
+    # ---- Bayesian posterior (same math as StrategicBankAgent) -------------
+
+    @staticmethod
+    def posterior_p_default(
+        private_signal: float,
+        public_signal: float,
+        private_precision: float,
+        public_precision: float,
+    ) -> float:
+        """P(borrower defaults) given noisy private + public signals."""
+        theta_star = 0.0
+        posterior_mean = (
+            public_precision * public_signal
+            + private_precision * private_signal
+        ) / (public_precision + private_precision)
+        posterior_std = 1.0 / np.sqrt(public_precision + private_precision)
+        return float(norm.cdf((theta_star - posterior_mean) / posterior_std))
+
+    # ---- Expected-utility decision (same payoff structure) ----------------
+
+    def decide(
+        self,
+        p_default: float,
+        interest_rate: float = 0.05,
+        recovery_rate: float = 0.40,
+        margin_pressure: float = 0.0,
+        current_equity: float | None = None,
+        initial_equity: float | None = None,
+    ) -> str:
+        """
+        Returns ``"WITHDRAW"`` or ``"ROLL_OVER"`` for this specific edge.
+
+        Applies **dynamic risk aversion** — as the *lender's* equity
+        depletes, ``λ_eff`` scales up (liquidity hoarding):
+
+            equity_loss_ratio = 1 − current / initial
+            λ_eff = λ_base · (1 + 2 · equity_loss_ratio)
+
+        • Stay & survive → 1 + r   (earn coupon on this claim)
+        • Stay & default → R       (recovery fraction)
+        • Withdraw       → 1.0 + margin_pressure   (safe principal)
+        """
+        # Dynamic lambda
+        if current_equity is not None and initial_equity is not None and initial_equity > 0:
+            eq_loss = max(0.0, min(1.0, 1.0 - current_equity / initial_equity))
+            eff_lambda = self.risk_aversion * (1.0 + 2.0 * eq_loss)
+        else:
+            eff_lambda = self.risk_aversion
+
+        e_return_stay = (
+            (1.0 - p_default) * (1.0 + interest_rate)
+            + p_default * recovery_rate
+        )
+        spread = (1.0 + interest_rate) - recovery_rate
+        risk_stay = np.sqrt(p_default * (1.0 - p_default) * spread ** 2)
+        U_stay = e_return_stay - eff_lambda * risk_stay
+        U_run  = 1.0 + margin_pressure
+        return "WITHDRAW" if U_run > U_stay else "ROLL_OVER"
 
 
 # ---------------------------------------------------------------------------
@@ -302,12 +414,18 @@ def run_game_simulation(
                 public_precision=public_precision,
             )
 
-            # Strategic decision
+            # Current equity proxy: initial equity eroded by this agent's
+            # share of the cumulative fire-sale losses.
+            agent_current_equity = agent.equity * (1.0 - loss_fraction)
+
+            # Strategic decision (with dynamic risk aversion)
             decision, U_stay, U_run = agent.decide(
                 p_default=p_default,
                 interest_rate=interest_rate,
                 recovery_rate=recovery_rate,
                 margin_pressure=margin_pressure,
+                current_equity=agent_current_equity,
+                initial_equity=agent.equity,
             )
 
             step_decisions.append(decision)

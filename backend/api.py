@@ -127,6 +127,12 @@ class SimulationRequest(BaseModel):
     panic_rate: float = Field(0.10, ge=0, le=0.50)
     fire_sale_alpha: float = Field(0.005, ge=0, le=0.05)
     margin_multiplier: float = Field(1.0, ge=0, le=5)
+    # Strategic engine (Morris & Shin)
+    use_strategic: bool = False
+    strategic_interest_rate: float = Field(0.05, ge=0.01, le=0.20)
+    strategic_recovery_rate: float = Field(0.40, ge=0.10, le=0.80)
+    strategic_risk_aversion: float = Field(1.0, ge=0.1, le=3.0)
+    strategic_info_regime: str = Field("OPAQUE")  # "OPAQUE" or "TRANSPARENT"
     # Circuit breaker
     circuit_breaker_enabled: bool = False
     circuit_breaker_threshold: float = Field(0.15, ge=0.01, le=0.50)
@@ -359,7 +365,26 @@ async def run_simulation(req: SimulationRequest):
 
         state = sim.compute_state_variables(W_dense, df)
 
-        if req.use_intraday:
+        if req.use_intraday and req.use_strategic:
+            # Strategic Bayesian engine — per-edge Morris & Shin agents
+            results = sim.run_strategic_intraday_simulation(
+                state, df,
+                trigger_idx=req.trigger_idx,
+                loss_severity=req.severity,
+                n_steps=req.n_steps,
+                uncertainty_sigma=req.sigma,
+                alpha=req.fire_sale_alpha,
+                margin_sensitivity=req.margin_multiplier,
+                max_iterations=req.max_iter,
+                convergence_threshold=req.tolerance,
+                distress_threshold=req.distress_threshold,
+                circuit_breaker_threshold=req.circuit_breaker_threshold if req.circuit_breaker_enabled else 0.0,
+                interest_rate=req.strategic_interest_rate,
+                recovery_rate=req.strategic_recovery_rate,
+                risk_aversion_mean=req.strategic_risk_aversion,
+                info_regime=req.strategic_info_regime,
+            )
+        elif req.use_intraday:
             results = sim.run_rust_intraday(
                 state, df,
                 trigger_idx=req.trigger_idx,
