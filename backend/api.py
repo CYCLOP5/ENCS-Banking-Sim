@@ -87,9 +87,13 @@ app = FastAPI(
     description="REST API for the Eisenberg-Noe Contagion Simulation engine.",
 )
 
+# Get allowed origins from environment (comma-separated) or allow all in dev
+_allowed_origins = os.environ.get("ALLOWED_ORIGINS", "*")
+ALLOWED_ORIGINS = _allowed_origins.split(",") if _allowed_origins != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
