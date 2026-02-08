@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+mlruns/
+mlflow.db
+encs_rust/target/
+*.egg-info/
+.git/
+.gitignore
+*.md
+training_history.json
+classification_report.txt
+confusion_matrix.json
+*.so
+*.c
+build_and_run.sh
+environment.yml
+
+# Large files not needed at runtime
+data/output/gnn_dataset.pt
+data/output/llm_store.db
+
