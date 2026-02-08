@@ -7,9 +7,10 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
-
+import dotenv
 import httpx
 
+dotenv.load_dotenv()
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
