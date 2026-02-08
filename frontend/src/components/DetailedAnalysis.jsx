@@ -494,9 +494,9 @@ function MechanicalDetail({ results }) {
               <tr className="border-b border-border text-text-muted uppercase tracking-wider">
                 <th className="text-left py-2 px-3">#</th>
                 <th className="text-left py-2 px-3">Bank</th>
-                <th className="text-right py-2 px-3">Initial Eq ($B)</th>
-                <th className="text-right py-2 px-3">Final Eq ($B)</th>
-                <th className="text-right py-2 px-3">Loss ($B)</th>
+                <th className="text-right py-2 px-3">Initial Eq</th>
+                <th className="text-right py-2 px-3">Final Eq</th>
+                <th className="text-right py-2 px-3">Loss</th>
                 <th className="text-center py-2 px-3">Status</th>
               </tr>
             </thead>
@@ -513,13 +513,13 @@ function MechanicalDetail({ results }) {
                   <td className="py-2 px-3 text-text-muted">{i + 1}</td>
                   <td className="py-2 px-3 text-text-primary">{c.name}</td>
                   <td className="py-2 px-3 text-right text-text-secondary">
-                    {(c.initial / 1e9).toFixed(1)}
+                    {formatUSD(c.initial)}
                   </td>
                   <td className="py-2 px-3 text-right text-text-secondary">
-                    {(c.final / 1e9).toFixed(1)}
+                    {formatUSD(c.final)}
                   </td>
                   <td className="py-2 px-3 text-right font-bold text-crisis-red">
-                    {(c.loss / 1e9).toFixed(1)}
+                    {formatUSD(c.loss)}
                   </td>
                   <td className="py-2 px-3 text-center">
                     <span

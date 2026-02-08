@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy import sparse
+from scipy.stats import norm
 from pathlib import Path
 import argparse
 import warnings
@@ -22,7 +23,7 @@ DEFAULT_DISTRESS_THRESHOLD = 0.5
 EU_INTERBANK_RATIO = 0.15
 US_INTERBANK_RATIO = 0.10  # Fixed: was 0.40, real-world is <10% for large banks
 DERIV_MULTIPLIER = 1.5
-DERIVATIVES_NETTING_RATIO = 0.02  # Proxies conversion from Gross Notional to Net Fair Value
+DERIVATIVES_NETTING_RATIO = 0.005  # Proxies conversion from Gross Notional to Net Fair Value
 def load_and_align_network():
     """
     Load adjacency matrix and node data with proper alignment.
@@ -315,7 +316,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                       max_iterations: int = DEFAULT_MAX_ITERATIONS,
                       convergence_threshold: float = DEFAULT_CONVERGENCE_THRESHOLD,
                       distress_threshold: float = DEFAULT_DISTRESS_THRESHOLD,
-                      margin_sensitivity: float = 1.0,
+                      margin_sensitivity: float = 0.2,
                       circuit_breaker_threshold: float = 0.0) -> dict:
     """
     LAYER 4 — RUST INTRADAY ENGINE: Exponential fire sales + discrete time steps.
@@ -613,7 +614,7 @@ def run_strategic_intraday_simulation(
     max_iterations: int = DEFAULT_MAX_ITERATIONS,
     convergence_threshold: float = DEFAULT_CONVERGENCE_THRESHOLD,
     distress_threshold: float = DEFAULT_DISTRESS_THRESHOLD,
-    margin_sensitivity: float = 1.0,
+    margin_sensitivity: float = 0.2,
     circuit_breaker_threshold: float = 0.0,
     # Strategic-model knobs  (sensible defaults match strategic_model.py)
     interest_rate: float = 0.05,
@@ -680,21 +681,20 @@ def run_strategic_intraday_simulation(
     else:  # OPAQUE
         public_precision = 0.01                                # α ≈ 0
 
-    # ── Instantiate one EdgeStrategicAgent per non-zero directed edge ────
-    #    Store as dict  (i, j) → agent  for O(1) lookup.
-    edge_agents: dict = {}
-    for i in range(n):
-        for j in range(n):
-            if i == j or W[i, j] <= 0:
-                continue
-            lam = max(0.1, rng.normal(risk_aversion_mean, risk_aversion_std))
-            edge_agents[(i, j)] = EdgeStrategicAgent(
-                lender_idx=i,
-                borrower_idx=j,
-                risk_aversion=lam,
-                exposure=W[i, j],
-                # alpha removed
-            )
+    # ── Vectorized Setup ─────────────────────────────────────────────────
+    # Identify all potentially active edges (non-zero weights)
+    # We use arrays instead of a dict of objects for massive performance gain
+    rows, cols = W.nonzero()
+    # Filter out self-loops and zero weights (though nonzero() handles weights > 0 if W is positive)
+    # Only strictly positive weights matter
+    valid_mask = (rows != cols) & (W[rows, cols] > 0)
+    rows = rows[valid_mask]
+    cols = cols[valid_mask]
+    n_edges = len(rows)
+
+    # Pre-generate risk aversion for each edge
+    # This replaces the loop that created EdgeStrategicAgent objects
+    edge_risk_aversions = np.maximum(0.1, rng.normal(risk_aversion_mean, risk_aversion_std, n_edges))
 
     print(f"  Trigger:           {trigger_name}")
     print(f"  Severity:          {loss_severity*100:.0f}%")
@@ -704,7 +704,7 @@ def run_strategic_intraday_simulation(
     print(f"  Public Prec (α):   {public_precision}")
     print(f"  Margin sens:       {margin_sensitivity}")
     print(f"  Info regime:       {info_regime}")
-    print(f"  Edge agents:       {len(edge_agents)}")
+    print(f"  Edge agents:       {n_edges} (Vectorized)")
     print(f"  Risk aversion μ:   {risk_aversion_mean}")
     if circuit_breaker_threshold > 0:
         print(f"  Circuit breaker:   {circuit_breaker_threshold:.0%} drop")
@@ -778,53 +778,84 @@ def run_strategic_intraday_simulation(
         margin_pressure = margin_sensitivity * 0.0 if asset_price >= 1.0 else \
             margin_sensitivity * (1.0 - asset_price) * 0.10
 
-        # ── Edge-level strategic decisions ────────────────────────────────
+        # ── Vectorized Edge Decisions ─────────────────────────────────────
         total_withdrawn_per_bank = np.zeros(n)
         total_received_per_bank  = np.zeros(n)
         total_withdrawn_global   = 0.0
 
-        edges_to_remove = []  # collect (i,j) to zero out after iteration
+        # 1. Identify currently active edges from our pool
+        #    (We use the original indices 'rows', 'cols', but check current W)
+        #    Extract current exposures using fancy indexing
+        current_exposures = W[rows, cols]
+        
+        # 2. Filter for edges that still have money (exposure > 0)
+        active_indices = current_exposures > 1e-9
+        
+        if np.any(active_indices):
+            # Subset arrays to just the active edges
+            act_rows = rows[active_indices]
+            act_cols = cols[active_indices]
+            act_exposures = current_exposures[active_indices]
+            act_risk_aversions = edge_risk_aversions[active_indices]
+            n_active = len(act_rows)
 
-        for (i, j), agent in edge_agents.items():
-            if W[i, j] <= 0:
-                continue  # already withdrawn in a prior step
+            # 3. Vectorized Signal Generation
+            #    Private signal: lender i's noisy observation of borrower j
+            effective_solvency_j = solvency[act_cols] * (1.0 - 0.5 * cum_loss_frac)
+            private_signals = effective_solvency_j + rng.normal(0, uncertainty_sigma, size=n_active)
+            
+            #    Public signals for these borrowers
+            act_public_signals = public_signals[act_cols]
 
-            # Private signal: lender i's noisy observation of borrower j
-            effective_solvency_j = solvency[j] * (1.0 - 0.5 * cum_loss_frac)
-            private_signal = effective_solvency_j + rng.normal(0, uncertainty_sigma)
+            # 4. Bayesian Posterior P(j defaults)
+            posterior_mean = (
+                public_precision * act_public_signals + 
+                private_precision * private_signals
+            ) / (public_precision + private_precision)
+            
+            posterior_std = 1.0 / np.sqrt(public_precision + private_precision)
+            theta_star = 0.0
+            p_defaults = norm.cdf((theta_star - posterior_mean) / posterior_std)
 
-            # Bayesian posterior  P(j defaults)
-            p_default = EdgeStrategicAgent.posterior_p_default(
-                private_signal=private_signal,
-                public_signal=float(public_signals[j]),
-                private_precision=private_precision,
-                public_precision=public_precision,
-            )
+            # 5. Expected-utility decision
+            #    Lender's current vs initial equity (for dynamic risk aversion)
+            lender_cur_eq = total_assets[act_rows] - total_liabilities[act_rows]
+            lender_init_eq = state['equity'][act_rows]
+            
+            #    Dynamic lambda: λ * (1 + 2 * loss_ratio)
+            #    Avoid divide by zero
+            equity_loss_ratios = np.zeros_like(lender_cur_eq)
+            valid_init = lender_init_eq > 0
+            equity_loss_ratios[valid_init] = 1.0 - (lender_cur_eq[valid_init] / lender_init_eq[valid_init])
+            equity_loss_ratios = np.clip(equity_loss_ratios, 0.0, 1.0)
+            
+            effective_lambdas = act_risk_aversions * (1.0 + 2.0 * equity_loss_ratios)
 
-            # Lender's current vs initial equity (for dynamic risk aversion)
-            lender_cur_eq  = float(total_assets[i] - total_liabilities[i])
-            lender_init_eq = float(state['equity'][i])
+            #    U_stay
+            e_return_stay = (1.0 - p_defaults) * (1.0 + interest_rate) + p_defaults * recovery_rate
+            spread = (1.0 + interest_rate) - recovery_rate
+            variance_stay = p_defaults * (1.0 - p_defaults) * (spread ** 2)
+            risk_stay = np.sqrt(variance_stay)
+            U_stay = e_return_stay - effective_lambdas * risk_stay
 
-            # Expected-utility decision for this specific edge
-            decision = agent.decide(
-                p_default=p_default,
-                interest_rate=interest_rate,
-                recovery_rate=recovery_rate,
-                margin_pressure=margin_pressure,
-                current_equity=lender_cur_eq,
-                initial_equity=lender_init_eq,
-            )
+            #    U_run
+            U_run = 1.0 + margin_pressure
 
-            if decision == "WITHDRAW":
-                withdrawn = W[i, j]
-                total_withdrawn_per_bank[j] += withdrawn   # borrower loses funding
-                total_received_per_bank[i]  += withdrawn   # lender gets cash back
-                total_withdrawn_global      += withdrawn
-                edges_to_remove.append((i, j))
+            # 6. Execute Withdrawals
+            withdraw_mask = U_run > U_stay
+            
+            if np.any(withdraw_mask):
+                w_rows = act_rows[withdraw_mask]
+                w_cols = act_cols[withdraw_mask]
+                w_amounts = act_exposures[withdraw_mask]
 
-        # Zero-out withdrawn edges
-        for (i, j) in edges_to_remove:
-            W[i, j] = 0.0
+                # Update W (set to 0)
+                W[w_rows, w_cols] = 0.0
+
+                # Accumulate flows
+                np.add.at(total_withdrawn_per_bank, w_cols, w_amounts)
+                np.add.at(total_received_per_bank, w_rows, w_amounts)
+                total_withdrawn_global = np.sum(w_amounts)
 
         # ── Margin calls on derivatives (unchanged from original) ────────
         margin_calls_total = 0.0

@@ -527,10 +527,11 @@ if asset_price <= cb_floor:
                  </h3>
                  <p className="text-text-secondary mb-4">
                     Beyond mechanical default, we model <strong>Panic Runs</strong> using
-                    a per-edge extension of Morris &amp; Shin (1998) Global Games. An{" "}
-                    <strong>EdgeStrategicAgent</strong> is instantiated for every directed
+                    a per-edge extension of Morris &amp; Shin (1998) Global Games. Conceptually, an{" "}
+                    <strong>EdgeStrategicAgent</strong> governs every directed
                     interbank exposure — each independently deciding whether to roll over
                     or withdraw based on Bayesian posteriors about the borrower.
+                    (Implementation is fully vectorized in NumPy for massively parallel execution).
                  </p>
 
                  <div className="p-4 bg-white/5 rounded-lg border border-white/10 mb-4">
