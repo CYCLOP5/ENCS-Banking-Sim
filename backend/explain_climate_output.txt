@@ -1,0 +1,80 @@
+Note: Unnecessary use of -X or --request, POST is already inferred.
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0* Host smayankulkarni-encs-systemic-risk.hf.space:443 was resolved.
+* IPv6: (none)
+* IPv4: 44.210.195.159, 23.23.113.181, 44.194.150.161
+*   Trying 44.210.195.159:443...
+* Connected to smayankulkarni-encs-systemic-risk.hf.space (44.210.195.159) port 443
+* ALPN: curl offers h2,http/1.1
+} [5 bytes data]
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+} [512 bytes data]
+*  CAfile: /etc/ssl/certs/ca-certificates.crt
+*  CApath: /etc/ssl/certs
+{ [5 bytes data]
+* TLSv1.3 (IN), TLS handshake, Server hello (2):
+{ [104 bytes data]
+* TLSv1.2 (IN), TLS handshake, Certificate (11):
+{ [3796 bytes data]
+* TLSv1.2 (IN), TLS handshake, Server key exchange (12):
+{ [333 bytes data]
+* TLSv1.2 (IN), TLS handshake, Server finished (14):
+{ [4 bytes data]
+* TLSv1.2 (OUT), TLS handshake, Client key exchange (16):
+} [70 bytes data]
+* TLSv1.2 (OUT), TLS change cipher, Change cipher spec (1):
+} [1 bytes data]
+* TLSv1.2 (OUT), TLS handshake, Finished (20):
+} [16 bytes data]
+* TLSv1.2 (IN), TLS handshake, Finished (20):
+{ [16 bytes data]
+* SSL connection using TLSv1.2 / ECDHE-RSA-AES128-GCM-SHA256 / prime256v1 / rsaEncryption
+* ALPN: server accepted h2
+* Server certificate:
+*  subject: CN=hf.space
+*  start date: Apr  8 00:00:00 2025 GMT
+*  expire date: May  7 23:59:59 2026 GMT
+*  subjectAltName: host "smayankulkarni-encs-systemic-risk.hf.space" matched cert's "*.hf.space"
+*  issuer: C=US; O=Amazon; CN=Amazon RSA 2048 M04
+*  SSL certificate verify ok.
+*   Certificate level 0: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+*   Certificate level 1: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+*   Certificate level 2: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+{ [5 bytes data]
+* using HTTP/2
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0* [HTTP/2] [1] OPENED stream for https://smayankulkarni-encs-systemic-risk.hf.space/api/explain/run
+* [HTTP/2] [1] [:method: POST]
+* [HTTP/2] [1] [:scheme: https]
+* [HTTP/2] [1] [:authority: smayankulkarni-encs-systemic-risk.hf.space]
+* [HTTP/2] [1] [:path: /api/explain/run]
+* [HTTP/2] [1] [user-agent: curl/8.5.0]
+* [HTTP/2] [1] [accept: */*]
+* [HTTP/2] [1] [content-type: application/json]
+* [HTTP/2] [1] [content-length: 71]
+} [5 bytes data]
+> POST /api/explain/run HTTP/2
+> Host: smayankulkarni-encs-systemic-risk.hf.space
+> User-Agent: curl/8.5.0
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 71
+> 
+} [71 bytes data]
+100    71    0     0  100    71      0     40  0:00:01  0:00:01 --:--:--    40< HTTP/2 200 
+< date: Sun, 08 Feb 2026 06:15:00 GMT
+< content-type: application/json
+< content-length: 4980
+< server: uvicorn
+< x-proxied-host: http://10.108.43.11
+< x-proxied-replica: 781q4a0b-g4b7p
+< x-proxied-path: /api/explain/run
+< link: <https://huggingface.co/spaces/SmayanKulkarni/encs-systemic-risk>;rel="canonical"
+< x-request-id: DZqgNH
+< vary: origin, access-control-request-method, access-control-request-headers
+< access-control-allow-credentials: true
+< 
+{ [4980 bytes data]
+{"run_id":"eec2f679-5cdc-4a92-8859-18ea9b5eb29f","response":{"title":"Climate Stress Test Results – 10‑Step Simulation","summary":"The 10‑step climate scenario with a $0.5 carbon tax and $0.1 green subsidy produced a steep drop in asset prices from 0.983 to 0.343, 4,481 defaults, 74 distressed institutions, and an equity loss of about $31.3 trillion. Margin calls grew to $7.6×10^13 by the final step. The largest losses were recorded by JPMorgan Chase, Bank of America, Citibank, Wells Fargo, and Banco Santander.","key_points":["Asset price fell from 0.983 to 0.343 over 10 steps","4,481 institutions defaulted, 74 became distressed","Total equity loss reached $31.3 trillion","Margin calls escalated to $7.6×10^13 by step 10","Top five banks suffered the largest individual losses"],"limitations":"Results are based on a simplified model with 10 discrete steps, no gridlock, and only the specified policy parameters. Real‑world dynamics, regulatory responses, and additional risk factors are not captured.","confidence":0.8},"evidence":{"run_id":"eec2f679-5cdc-4a92-8859-18ea9b5eb29f","run_type":"climate","created_at":"2026-02-08T06:14:38.862923+00:00","request":{"carbon_tax":0.5,"green_subsidy":0.1,"use_intraday":true,"trigger_idx":0,"severity":1.0,"n_steps":10},"summary":{"run_type":"climate","n_defaults":4481,"n_distressed":74,"equity_loss":31288023337250.582,"final_asset_price":0.3431848010474689,"trigger_name":"JPMORGAN CHASE BANK, NATIONAL ASSOCIATIO","loss_severity":0.0,"graphs":{"series":{"price_timeline":[0.9826232927984535,0.9712550493405587,0.9625051219595271,0.9467501784541195,0.9149863516972278,0.8586750705315449,0.7726150654170911,0.6515351175335031,0.50099581297575,0.3431848010474689],"defaults_timeline":[420,825,1242,2058,3390,4215,4413,4458,4472,4481],"distressed_timeline":[2988,3074,2864,2237,1026,240,59,31,83,74],"gridlock_timeline":[0,0,0,0,0,0,0,0,0,0],"margin_calls_timeline":[0.0,2659491885931.251,4399392943300.243,5738562706733.342,8149844886374.827,13011274531604.803,21629673495776.72,34801092145492.023,53332286531774.95,76372213161225.61],"equity_loss_timeline":[5302923108.198117,2067431620231.286,4935985944662.912,7476132777187.463,9227026369760.88,11046490729181.451,13949134238932.674,17885794778481.195,22489728597450.832,27022131087203.992]},"stats":{"price_timeline":{"min":0.3431848010474689,"max":0.9826232927984535,"last":0.3431848010474689,"peak_step":1},"defaults_timeline":{"min":420.0,"max":4481.0,"last":4481.0,"peak_step":10},"distressed_timeline":{"min":31.0,"max":3074.0,"last":74.0,"peak_step":2},"gridlock_timeline":{"min":0.0,"max":0.0,"last":0.0,"peak_step":1},"margin_calls_timeline":{"min":0.0,"max":76372213161225.61,"last":76372213161225.61,"peak_step":10},"equity_loss_timeline":{"min":5302923108.198117,"max":27022131087203.992,"last":27022131087203.992,"peak_step":10}},"lengths":{"price_timeline":10,"defaults_timeline":10,"distressed_timeline":10,"gridlock_timeline":10,"margin_calls_timeline":10,"equity_loss_timeline":10}},"status_counts":{"Safe":1,"Distressed":74,"Default":4481}},"highlights":[{"name":"JPMORGAN CHASE BANK, NATIONAL ASSOCIATION","equity_loss":3291144979303.081},{"name":"BANK OF AMERICA, NATIONAL ASSOCIATION","equity_loss":2291117181087.5264},{"name":"CITIBANK, N.A.","equity_loss":1594218441728.3015},{"name":"WELLS FARGO BANK, NATIONAL ASSOCIATION","equity_loss":1527915625388.6128},{"name":"Banco Santander, S.A.","equity_loss":826464280613.824}],"graphs":{"series":{"price_timeline":[0.9826232927984535,0.9712550493405587,0.9625051219595271,0.9467501784541195,0.9149863516972278,0.8586750705315449,0.7726150654170911,0.6515351175335031,0.50099581297575,0.3431848010474689],"defaults_timeline":[420,825,1242,2058,3390,4215,4413,4458,4472,4481],"distressed_timeline":[2988,3074,2864,2237,1026,240,59,31,83,74],"gridlock_timeline":[0,0,0,0,0,0,0,0,0,0],"margin_calls_timeline":[0.0,2659491885931.251,4399392943300.243,5738562706733.342,8149844886374.827,13011274531604.803,21629673495776.72,34801092145492.023,53332286531774.95,76372213161225.61],"equity_loss_timeline":[5302923108.100  5051  100  4980  100    71   2717     38  0:00:01  0:00:01 --:--:--  2755
+* Connection #0 to host smayankulkarni-encs-systemic-risk.hf.space left intact
+198117,2067431620231.286,4935985944662.912,7476132777187.463,9227026369760.88,11046490729181.451,13949134238932.674,17885794778481.195,22489728597450.832,27022131087203.992]},"stats":{"price_timeline":{"min":0.3431848010474689,"max":0.9826232927984535,"last":0.3431848010474689,"peak_step":1},"defaults_timeline":{"min":420.0,"max":4481.0,"last":4481.0,"peak_step":10},"distressed_timeline":{"min":31.0,"max":3074.0,"last":74.0,"peak_step":2},"gridlock_timeline":{"min":0.0,"max":0.0,"last":0.0,"peak_step":1},"margin_calls_timeline":{"min":0.0,"max":76372213161225.61,"last":76372213161225.61,"peak_step":10},"equity_loss_timeline":{"min":5302923108.198117,"max":27022131087203.992,"last":27022131087203.992,"peak_step":10}},"lengths":{"price_timeline":10,"defaults_timeline":10,"distressed_timeline":10,"gridlock_timeline":10,"margin_calls_timeline":10,"equity_loss_timeline":10}}}}

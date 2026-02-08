@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 import simulation_engine as sim
 from strategic_model import run_game_simulation
-from climate_risk import assign_climate_exposure, run_transition_shock
+from climate_risk import assign_climate_exposure, run_full_climate_scenario
 
 from pathlib import Path
 
@@ -205,40 +205,33 @@ def _ndarray_to_list(v):
     return v
 
 
+def _clean_value(v):
+    if v is None:
+        return None
+    if isinstance(v, (str, bool)):
+        return v
+    if isinstance(v, (int, float)) and not isinstance(v, (np.generic,)):
+        return v if np.isfinite(v) else 0.0
+    if isinstance(v, np.ndarray):
+        return np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0).tolist()
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating,)):
+        return float(v) if np.isfinite(v) else 0.0
+    if isinstance(v, dict):
+        return _clean_results(v)
+    if isinstance(v, (list, tuple)):
+        return [_clean_value(x) for x in v]
+    # Fallback for objects like StrategicBankAgent
+    return str(v)
+
 def _clean_results(d: dict) -> dict:
     """Convert numpy arrays and other non-serializable types to JSON-safe."""
     out = {}
     for k, v in d.items():
-        if isinstance(v, np.ndarray):
-            v_safe = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
-            out[k] = v_safe.tolist()
-        elif isinstance(v, dict):
-            out[k] = _clean_results(v)
-        elif isinstance(v, (np.integer,)):
-            out[k] = int(v)
-        elif isinstance(v, (np.floating,)):
-            out[k] = float(v) if np.isfinite(v) else 0.0
-        elif isinstance(v, list):
-            cleaned_list = []
-            for item in v:
-                if isinstance(item, np.ndarray):
-                    cleaned_list.append(
-                        np.nan_to_num(item, nan=0.0, posinf=0.0, neginf=0.0).tolist()
-                    )
-                elif isinstance(item, (np.floating, float)):
-                    cleaned_list.append(float(item) if np.isfinite(item) else 0.0)
-                elif isinstance(item, (np.integer, int)):
-                    cleaned_list.append(int(item))
-                elif isinstance(item, dict):
-                    cleaned_list.append(_clean_results(item))
-                else:
-                    cleaned_list.append(item)
-            out[k] = cleaned_list
-        elif k == "agents":
-            # Skip non-serialisable agent objects
+        if k == "agents":
             continue
-        else:
-            out[k] = v
+        out[k] = _clean_value(v)
     return out
 
 
@@ -508,6 +501,7 @@ async def run_simulation(req: SimulationRequest):
         run_id = str(uuid.uuid4())
         try:
             summary = build_run_summary("mechanical", cleaned)
+            print(f"DEBUG: Saving mechanical run {run_id}")
             _llm_store.save_run(
                 run_id=run_id,
                 run_type="mechanical",
@@ -516,7 +510,10 @@ async def run_simulation(req: SimulationRequest):
                 bank_snapshot_json={"banks": _build_bank_snapshot(df)},
                 summary_json=summary,
             )
-        except Exception:
+            print(f"DEBUG: Successfully saved mechanical run {run_id}")
+        except Exception as e:
+            print(f"DEBUG: Failed to store mechanical run {run_id}: {e}")
+            traceback.print_exc()
             logger.exception("Failed to store simulation run")
         cleaned["run_id"] = run_id
         return cleaned
@@ -533,14 +530,12 @@ async def run_climate(req: ClimateRequest):
         df = df.copy()
         assign_climate_exposure(df)
 
-        results = run_transition_shock(
-            df=df,
+        results = run_full_climate_scenario(
             W_dense=W_dense,
+            df=df,
             carbon_tax_severity=req.carbon_tax,
             green_subsidy=req.green_subsidy,
             use_intraday=req.use_intraday,
-            trigger_idx=req.trigger_idx,
-            loss_severity=req.severity,
             n_steps=req.n_steps,
         )
 
@@ -549,6 +544,7 @@ async def run_climate(req: ClimateRequest):
         run_id = str(uuid.uuid4())
         try:
             summary = build_run_summary("climate", cleaned)
+            print(f"DEBUG: Saving climate run {run_id}")
             _llm_store.save_run(
                 run_id=run_id,
                 run_type="climate",
@@ -557,7 +553,10 @@ async def run_climate(req: ClimateRequest):
                 bank_snapshot_json={"banks": _build_bank_snapshot(df)},
                 summary_json=summary,
             )
-        except Exception:
+            print(f"DEBUG: Successfully saved climate run {run_id}")
+        except Exception as e:
+            print(f"DEBUG: Failed to store climate run {run_id}: {e}")
+            traceback.print_exc()
             logger.exception("Failed to store climate run")
         cleaned["run_id"] = run_id
         return cleaned
@@ -580,8 +579,8 @@ async def run_game(req: GameRequest):
             risk_aversion_mean=req.risk_aversion,
             private_noise_std=req.noise_std,
             fire_sale_haircut=req.haircut,
-            margin_pressure_rate=req.margin_pressure,
-            interbank_exposure_usd=req.exposure,
+            margin_volatility=req.margin_pressure,
+            initial_exposure_per_bank=req.exposure,
         )
 
         results_transparent = run_game_simulation(
@@ -594,8 +593,8 @@ async def run_game(req: GameRequest):
             risk_aversion_mean=req.risk_aversion,
             private_noise_std=req.noise_std,
             fire_sale_haircut=req.haircut,
-            margin_pressure_rate=req.margin_pressure,
-            interbank_exposure_usd=req.exposure,
+            margin_volatility=req.margin_pressure,
+            initial_exposure_per_bank=req.exposure,
         )
 
         cleaned = {
@@ -609,6 +608,7 @@ async def run_game(req: GameRequest):
         run_id = str(uuid.uuid4())
         try:
             summary = build_run_summary("game", cleaned)
+            print(f"DEBUG: Saving game run {run_id}")
             _llm_store.save_run(
                 run_id=run_id,
                 run_type="game",
@@ -617,7 +617,10 @@ async def run_game(req: GameRequest):
                 bank_snapshot_json=None,
                 summary_json=summary,
             )
-        except Exception:
+            print(f"DEBUG: Successfully saved game run {run_id}")
+        except Exception as e:
+            print(f"DEBUG: Failed to store game run {run_id}: {e}")
+            traceback.print_exc()
             logger.exception("Failed to store game run")
         cleaned["run_id"] = run_id
         return cleaned
@@ -653,13 +656,17 @@ async def get_gnn_risk():
 @app.post("/api/explain/run")
 async def explain_run(req: ExplainRunRequest):
     try:
+        print(f"DEBUG: Explain run requested for {req.run_id} type={req.run_type}")
         stored = (
             _llm_store.get_run(req.run_id)
             if req.run_id
             else _llm_store.get_latest_run(req.run_type)
         )
         if not stored:
-            raise HTTPException(status_code=404, detail="Run not found")
+            print(f"DEBUG: Run {req.run_id} not found in store")
+            # List all runs to debug
+            # all_runs = _llm_store.get_all_runs_debug() # hypothetical
+            raise HTTPException(status_code=404, detail=f"Run {req.run_id} not found")
 
         summary = stored.summary_json or build_run_summary(stored.run_type, stored.result_json)
         highlights = _extract_top_losses(stored.result_json, top_n=5)

@@ -1,0 +1,80 @@
+Note: Unnecessary use of -X or --request, POST is already inferred.
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0* Host smayankulkarni-encs-systemic-risk.hf.space:443 was resolved.
+* IPv6: (none)
+* IPv4: 23.23.113.181, 44.194.150.161, 44.210.195.159
+*   Trying 23.23.113.181:443...
+* Connected to smayankulkarni-encs-systemic-risk.hf.space (23.23.113.181) port 443
+* ALPN: curl offers h2,http/1.1
+} [5 bytes data]
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+} [512 bytes data]
+*  CAfile: /etc/ssl/certs/ca-certificates.crt
+*  CApath: /etc/ssl/certs
+{ [5 bytes data]
+* TLSv1.3 (IN), TLS handshake, Server hello (2):
+{ [104 bytes data]
+* TLSv1.2 (IN), TLS handshake, Certificate (11):
+{ [3796 bytes data]
+* TLSv1.2 (IN), TLS handshake, Server key exchange (12):
+{ [333 bytes data]
+* TLSv1.2 (IN), TLS handshake, Server finished (14):
+{ [4 bytes data]
+* TLSv1.2 (OUT), TLS handshake, Client key exchange (16):
+} [70 bytes data]
+* TLSv1.2 (OUT), TLS change cipher, Change cipher spec (1):
+} [1 bytes data]
+* TLSv1.2 (OUT), TLS handshake, Finished (20):
+} [16 bytes data]
+* TLSv1.2 (IN), TLS handshake, Finished (20):
+{ [16 bytes data]
+* SSL connection using TLSv1.2 / ECDHE-RSA-AES128-GCM-SHA256 / prime256v1 / rsaEncryption
+* ALPN: server accepted h2
+* Server certificate:
+*  subject: CN=hf.space
+*  start date: Apr  8 00:00:00 2025 GMT
+*  expire date: May  7 23:59:59 2026 GMT
+*  subjectAltName: host "smayankulkarni-encs-systemic-risk.hf.space" matched cert's "*.hf.space"
+*  issuer: C=US; O=Amazon; CN=Amazon RSA 2048 M04
+*  SSL certificate verify ok.
+*   Certificate level 0: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+*   Certificate level 1: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+*   Certificate level 2: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+{ [5 bytes data]
+* using HTTP/2
+* [HTTP/2] [1] OPENED stream for https://smayankulkarni-encs-systemic-risk.hf.space/api/explain/run
+* [HTTP/2] [1] [:method: POST]
+* [HTTP/2] [1] [:scheme: https]
+* [HTTP/2] [1] [:authority: smayankulkarni-encs-systemic-risk.hf.space]
+* [HTTP/2] [1] [:path: /api/explain/run]
+* [HTTP/2] [1] [user-agent: curl/8.5.0]
+* [HTTP/2] [1] [accept: */*]
+* [HTTP/2] [1] [content-type: application/json]
+* [HTTP/2] [1] [content-length: 68]
+} [5 bytes data]
+> POST /api/explain/run HTTP/2
+> Host: smayankulkarni-encs-systemic-risk.hf.space
+> User-Agent: curl/8.5.0
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 68
+> 
+} [68 bytes data]
+< HTTP/2 404 
+< date: Sun, 08 Feb 2026 06:04:19 GMT
+< content-type: application/json
+< content-length: 63
+< server: uvicorn
+< x-proxied-host: http://10.108.125.96
+< x-proxied-replica: xwtm9mft-wn9h7
+< x-proxied-path: /api/explain/run
+< link: <https://huggingface.co/spaces/SmayanKulkarni/encs-systemic-risk>;rel="canonical"
+< x-request-id: KnD8gX
+< vary: origin, access-control-request-method, access-control-request-headers
+< access-control-allow-credentials: true
+< 
+{ [63 bytes data]
+100   131  100    63  100    68     79     85 --:--:-- --:--:-- --:--:--   164
+* Connection #0 to host smayankulkarni-encs-systemic-risk.hf.space left intact
+{"detail":"Run 5872637c-26e9-4390-ba68-12843c4dbefa not found"}

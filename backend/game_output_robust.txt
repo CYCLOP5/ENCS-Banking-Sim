@@ -1,0 +1,80 @@
+Note: Unnecessary use of -X or --request, POST is already inferred.
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0* Host smayankulkarni-encs-systemic-risk.hf.space:443 was resolved.
+* IPv6: (none)
+* IPv4: 44.210.195.159, 23.23.113.181, 44.194.150.161
+*   Trying 44.210.195.159:443...
+* Connected to smayankulkarni-encs-systemic-risk.hf.space (44.210.195.159) port 443
+* ALPN: curl offers h2,http/1.1
+} [5 bytes data]
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+} [512 bytes data]
+*  CAfile: /etc/ssl/certs/ca-certificates.crt
+*  CApath: /etc/ssl/certs
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0{ [5 bytes data]
+* TLSv1.3 (IN), TLS handshake, Server hello (2):
+{ [104 bytes data]
+* TLSv1.2 (IN), TLS handshake, Certificate (11):
+{ [3796 bytes data]
+* TLSv1.2 (IN), TLS handshake, Server key exchange (12):
+{ [333 bytes data]
+* TLSv1.2 (IN), TLS handshake, Server finished (14):
+{ [4 bytes data]
+* TLSv1.2 (OUT), TLS handshake, Client key exchange (16):
+} [70 bytes data]
+* TLSv1.2 (OUT), TLS change cipher, Change cipher spec (1):
+} [1 bytes data]
+* TLSv1.2 (OUT), TLS handshake, Finished (20):
+} [16 bytes data]
+* TLSv1.2 (IN), TLS handshake, Finished (20):
+{ [16 bytes data]
+* SSL connection using TLSv1.2 / ECDHE-RSA-AES128-GCM-SHA256 / prime256v1 / rsaEncryption
+* ALPN: server accepted h2
+* Server certificate:
+*  subject: CN=hf.space
+*  start date: Apr  8 00:00:00 2025 GMT
+*  expire date: May  7 23:59:59 2026 GMT
+*  subjectAltName: host "smayankulkarni-encs-systemic-risk.hf.space" matched cert's "*.hf.space"
+*  issuer: C=US; O=Amazon; CN=Amazon RSA 2048 M04
+*  SSL certificate verify ok.
+*   Certificate level 0: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+*   Certificate level 1: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+*   Certificate level 2: Public key type RSA (2048/112 Bits/secBits), signed using sha256WithRSAEncryption
+{ [5 bytes data]
+* using HTTP/2
+* [HTTP/2] [1] OPENED stream for https://smayankulkarni-encs-systemic-risk.hf.space/api/game
+* [HTTP/2] [1] [:method: POST]
+* [HTTP/2] [1] [:scheme: https]
+* [HTTP/2] [1] [:authority: smayankulkarni-encs-systemic-risk.hf.space]
+* [HTTP/2] [1] [:path: /api/game]
+* [HTTP/2] [1] [user-agent: curl/8.5.0]
+* [HTTP/2] [1] [accept: */*]
+* [HTTP/2] [1] [content-type: application/json]
+* [HTTP/2] [1] [content-length: 2]
+} [5 bytes data]
+> POST /api/game HTTP/2
+> Host: smayankulkarni-encs-systemic-risk.hf.space
+> User-Agent: curl/8.5.0
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 2
+> 
+} [2 bytes data]
+< HTTP/2 200 
+< date: Sun, 08 Feb 2026 06:06:52 GMT
+< content-type: application/json
+< content-length: 4568
+< server: uvicorn
+< x-proxied-host: http://10.108.126.134
+< x-proxied-replica: mnufg829-69vxr
+< x-proxied-path: /api/game
+< link: <https://huggingface.co/spaces/SmayanKulkarni/encs-systemic-risk>;rel="canonical"
+< x-request-id: iJV10B
+< vary: origin, access-control-request-method, access-control-request-headers
+< access-control-allow-credentials: true
+< 
+{ [4568 bytes data]
+{"opaque":{"info_regime":"OPAQUE","n_banks":20,"n_steps":5,"true_solvency":0.2,"interest_rate":0.1,"recovery_rate":0.4,"risk_aversion_mean":1.0,"private_noise_std":0.08,"public_precision":0.01,"private_precision":156.25,"public_signal":0.0,"total_runs":63,"total_decisions":100,"run_rate":0.63,"total_fire_sale_loss":3985000000.0,"timeline":{"steps":[1,2,3,4,5],"n_runs":[10,10,10,17,16],"n_rollovers":[10,10,10,3,4],"run_fraction":[0.5,0.5,0.5,0.85,0.8],"cumulative_fire_sale_loss":[2000000000.0,3000000000.0,3500000000.0,3925000000.0,3985000000.0],"step_fire_sale_loss":[2000000000.0,1000000000.0,500000000.0,425000000.0,60000000.0],"avg_belief":[0.047670608242443444,0.041980658110948116,0.09530758305130156,0.07239782855463597,0.15513139382827762],"avg_U_stay":[0.9589480945056199,0.970686170542144,0.9136166917320262,0.9130605434640314,0.798182126200574],"avg_U_run":[1.006,1.0109999999999997,1.0172500000000002,1.0234999999999999,1.0333837209302323],"margin_pressure":[0.006,0.011,0.01725,0.0235,0.033383720930232556],"decisions":[["ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","WITHDRAW","ROLL_OVER","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","ROLL_OVER"],["ROLL_OVER","ROLL_OVER","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","WITHDRAW","ROLL_OVER","ROLL_OVER"],["WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","WITHDRAW"],["WITHDRAW","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW"],["WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","WITHDRAW","WITHDRAW","WITHDRAW","WITHDRAW","ROLL_OVER","ROLL_OVER"]]}},"transparent":{"info_regime":"TRANSPARENT","n_banks":20,"n_steps":5,"true_solvency":0.2,"interest_rate":0.1,"recovery_rate":0.4,"risk_aversion_mean":1.0,"private_noise_std":0.08,"public_precision":100.0,"private_precision":156.25,"public_signal":0.20496714153011233,"total_runs":12,"total_decisions":100,"run_rate":0.12,"total_fire_sale_loss":1893190000.0,"timeline":{"steps":[1,2,3,4,5],"n_runs":[3,2,3,2,2],"n_rollovers":[17,18,17,18,18],"run_fraction":[0.15,0.1,0.15,0.1,0.1],"cumulative_fire_sale_loss":[600000000.0,940000000.0,1399000000.0,1659100000.0,1893190000.0],"step_fire_sale_loss":[600000000.0,340000000.0,459000000.0,260100000.0,234090000.0],"avg_belief":[0.005894427201303731,0.004003134743872205,0.010788720365069782,0.003673733740403315,0.004379744036141541],"avg_U_stay":[1.0568437113769482,1.0651230258528517,1.0595410755355206,1.0666244025788516,1.0680590032786972],"avg_U_run":[1.006,1.007022727272727,1.0077364532019706,1.0089137739516798,1.009724520338831],"margin_pressure":[0.006,0.007022727272727273,0.007736453201970443,0.008913773951680089,0.009724520338830854],"decisions":[["ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER"],["ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER"],["ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER"],["ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","RO100  4570  100  4568  100     2   5214      2  0:00:01 --:--:--  0:00:01  5210
+* Connection #0 to host smayankulkarni-encs-systemic-risk.hf.space left intact
+LL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW"],["ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","ROLL_OVER","WITHDRAW","ROLL_OVER","ROLL_OVER","ROLL_OVER"]]}},"capital_saved":2091810000.0,"run_id":"c01d79e9-0859-47ae-a604-f3fb9a8eb4c2"}
