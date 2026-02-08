@@ -210,12 +210,18 @@ fn run_intraday_step_impl(
                 }
                 margin_calls_total += margin_call;
 
-                if state.external_assets[i] >= margin_call {
-
-                    state.external_assets[i] -= margin_call;
+                // convert dollar margin call -> asset units to sell at current price
+                let units_sold = if state.asset_price > 1e-9 {
+                    margin_call / state.asset_price
                 } else {
+                    state.external_assets[i]
+                };
 
-                    let shortfall = margin_call - state.external_assets[i];
+                if state.external_assets[i] >= units_sold {
+                    state.external_assets[i] -= units_sold;
+                } else {
+                    // shortfall in DOLLARS: requested margin minus proceeds from selling remaining units
+                    let shortfall = margin_call - (state.external_assets[i] * state.asset_price);
                     state.external_assets[i] = 0.0;
 
                     systemic_credit_losses += shortfall;

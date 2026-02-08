@@ -579,10 +579,10 @@ function StrategicDetail({ results }) {
           <p className="text-[10px] font-[family-name:var(--font-mono)] text-crisis-red uppercase tracking-wider mb-2">
             Opaque Regime (Fog of War)
           </p>
-          <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-crisis-red">
+          <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-crisis-red" title="Fraction of agents who withdrew at least once during the run">
             {((opaque.run_rate ?? 0) * 100).toFixed(1)}%
           </p>
-          <p className="text-[10px] text-text-muted mt-1">Bank Run Rate</p>
+          <p className="text-[10px] text-text-muted mt-1">Cumulative run rate</p>
           <p className="text-lg font-[family-name:var(--font-mono)] text-crisis-red mt-2">
             {formatUSD(opaque.total_fire_sale_loss ?? 0)}
           </p>
@@ -603,10 +603,10 @@ function StrategicDetail({ results }) {
           <p className="text-[10px] font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-2">
             Transparent Regime (AI Signal)
           </p>
-          <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-stability-green">
+          <p className="text-3xl font-bold font-[family-name:var(--font-mono)] text-stability-green" title="Fraction of agents who withdrew at least once during the run">
             {((transparent.run_rate ?? 0) * 100).toFixed(1)}%
           </p>
-          <p className="text-[10px] text-text-muted mt-1">Bank Run Rate</p>
+          <p className="text-[10px] text-text-muted mt-1">Cumulative run rate</p>
           <p className="text-lg font-[family-name:var(--font-mono)] text-stability-green mt-2">
             {formatUSD(transparent.total_fire_sale_loss ?? 0)}
           </p>

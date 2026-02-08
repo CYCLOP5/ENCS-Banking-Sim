@@ -484,15 +484,20 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                         if margin_call <= 0.0:
                             continue
                         margin_calls_total += margin_call
-                        if external_assets[i] >= margin_call:
-                            external_assets[i] -= margin_call
+                        # Convert dollar margin call -> asset units to sell at current price
+                        if asset_price > 1e-9:
+                            units_sold = margin_call / asset_price
                         else:
-                            shortfall = margin_call - external_assets[i]
+                            # If price is (near) zero, liquidate everything to raise whatever cash remains
+                            units_sold = external_assets[i]
+
+                        if external_assets[i] >= units_sold:
+                            external_assets[i] -= units_sold
+                        else:
+                            # shortfall is measured in DOLLARS: requested margin minus proceeds from selling all remaining units
+                            shortfall = margin_call - (external_assets[i] * asset_price)
                             external_assets[i] = 0.0
-                            # FIX: Margin default is a credit loss, not a
-                            # liquidity withdrawal.  Adding it to
-                            # total_withdrawn_global would inflate fire-sale
-                            # pressure and violate conservation of money.
+                            # Margin default is a credit loss, not a liquidity withdrawal.
                             systemic_credit_losses += shortfall
 
             total_volume_norm = total_withdrawn_global / 1e12
@@ -901,13 +906,18 @@ def run_strategic_intraday_simulation(
                     if margin_call <= 0.0:
                         continue
                     margin_calls_total += margin_call
-                    if external_assets[i] >= margin_call:
-                        external_assets[i] -= margin_call
+                    # Convert dollar margin call -> units at current market price
+                    if asset_price > 1e-9:
+                        units_sold = margin_call / asset_price
                     else:
-                        shortfall = margin_call - external_assets[i]
+                        units_sold = external_assets[i]
+
+                    if external_assets[i] >= units_sold:
+                        external_assets[i] -= units_sold
+                    else:
+                        shortfall = margin_call - (external_assets[i] * asset_price)
                         external_assets[i] = 0.0
-                        # FIX: Margin default is a credit loss, not a
-                        # liquidity withdrawal — same fix as Python fallback.
+                        # Margin default is a credit loss, not a liquidity withdrawal — same fix as Python fallback.
                         systemic_credit_losses += shortfall
 
         # ── Fire-sale price impact ───────────────────────────────────────
@@ -990,7 +1000,19 @@ def run_strategic_intraday_simulation(
     total_lost   = float(np.sum(np.maximum(initial_equity - final_equity, 0)))
 
     # Compute scalars
-    final_run_rate = run_fraction_timeline[-1] if run_fraction_timeline else 0.0
+    # FIX: Use cumulative run rate (Total unique withdrawals / Total agents)
+    # Count agents that *ever* chose "WITHDRAW" across the decisions timeline
+    if decisions_timeline:
+        n_agents = len(decisions_timeline[0]) if len(decisions_timeline[0]) > 0 else 0
+        ever_withdrawn = set()
+        for step_decisions in decisions_timeline:
+            for idx, d in enumerate(step_decisions):
+                if d == "WITHDRAW":
+                    ever_withdrawn.add(idx)
+        final_run_rate = (len(ever_withdrawn) / n_agents) if n_agents > 0 else 0.0
+    else:
+        final_run_rate = 0.0
+
     final_fire_sale_loss = cumulative_fire_sale_loss_timeline[-1] if cumulative_fire_sale_loss_timeline else 0.0
 
 # Compute timeline steps array for convenience

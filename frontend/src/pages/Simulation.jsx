@@ -666,7 +666,7 @@ export default function Simulation() {
       }
 
       stepIdx++;
-    }, 1200); // 1.2s per step
+    }, 2500); // 2.5s per step - Slowed down to observe rollover transitions
   }, [topology, results, gameRegime, stopContagion]);
 
   // Auto-start game playback when strategic results arrive
@@ -1799,7 +1799,7 @@ export default function Simulation() {
                             fillOpacity={0.1}
                             fill="#8b5cf6"
                             strokeWidth={2}
-                            name="Run Rate %"
+                            name="Run Fraction (per-step %)"
                             yAxisId="right"
                           />
                         )}
@@ -1853,10 +1853,10 @@ export default function Simulation() {
                     <p className="text-[10px] font-[family-name:var(--font-mono)] text-crisis-red uppercase tracking-wider mb-1">
                       Opaque Regime
                     </p>
-                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-crisis-red">
+                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-crisis-red" title="Fraction of agents who withdrew at least once during the run">
                       {((gameData.opaque?.run_rate ?? 0) * 100).toFixed(1)}%
                     </p>
-                    <p className="text-[10px] text-text-muted">Bank Runs</p>
+                    <p className="text-[10px] text-text-muted mt-1">Cumulative run rate</p>
                     <p className="text-sm font-[family-name:var(--font-mono)] text-crisis-red mt-1">
                       {formatUSD(gameData.opaque?.total_fire_sale_loss ?? 0)}
                     </p>
@@ -1895,10 +1895,10 @@ export default function Simulation() {
                     <p className="text-[10px] font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-1">
                       Transparent Regime
                     </p>
-                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-stability-green">
+                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-stability-green" title="Fraction of agents who withdrew at least once during the run">
                       {((gameData.transparent?.run_rate ?? 0) * 100).toFixed(1)}%
                     </p>
-                    <p className="text-[10px] text-text-muted">Bank Runs</p>
+                    <p className="text-[10px] text-text-muted mt-1">Cumulative run rate</p>
                     <p className="text-sm font-[family-name:var(--font-mono)] text-stability-green mt-1">
                       {formatUSD(gameData.transparent?.total_fire_sale_loss ?? 0)}
                     </p>
