@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import Lenis from "lenis";
 import Navbar from "./Navbar";
+import Chatbot from "./Chatbot";
 
 export default function Layout() {
   const lenisRef = useRef(null);
@@ -44,6 +45,8 @@ export default function Layout() {
       <main>
         <Outlet />
       </main>
+
+      <Chatbot />
     </div>
   );
 }

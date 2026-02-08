@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import GlassPanel from "./GlassPanel";
 import { cn, formatUSD } from "../lib/utils";
+import { explainRun } from "../services/api";
 import {
   LineChart,
   Line,
@@ -987,6 +988,30 @@ function StrategicDetail({ results }) {
 export default function DetailedAnalysis({ open, onClose, results, tab }) {
   if (!open) return null;
 
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmError, setLlmError] = useState(null);
+  const [llmResponse, setLlmResponse] = useState(null);
+
+  const runType = tab === "strategic" ? "game" : tab;
+
+  const handleExplain = async () => {
+    if (!results?.run_id) return;
+    setLlmLoading(true);
+    setLlmError(null);
+    try {
+      const res = await explainRun({
+        runId: results.run_id,
+        runType,
+        question: "Summarize the results and explain the key graph trends in simple terms.",
+      });
+      setLlmResponse(res.response);
+    } catch (e) {
+      setLlmError(e.message);
+    } finally {
+      setLlmLoading(false);
+    }
+  };
+
   const isGame = tab === "strategic";
   const title = isGame
     ? "Strategic Simulation — Global Games A/B Test"
@@ -1029,16 +1054,56 @@ export default function DetailedAnalysis({ open, onClose, results, tab }) {
                   {title}
                 </h2>
               </div>
-              <button
-                onClick={onClose}
-                className="p-2 rounded-lg hover:bg-white/5 transition-colors text-text-muted hover:text-white"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExplain}
+                  disabled={!results?.run_id || llmLoading}
+                  className={cn(
+                    "px-3 py-2 rounded-lg text-[11px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider border transition-colors",
+                    llmLoading
+                      ? "bg-white/5 text-text-muted border-border"
+                      : "bg-neon-purple/10 text-neon-purple border-neon-purple/30 hover:bg-neon-purple/20"
+                  )}
+                >
+                  {llmLoading ? "Generating…" : "Explain"}
+                </button>
+                <button
+                  onClick={onClose}
+                  className="p-2 rounded-lg hover:bg-white/5 transition-colors text-text-muted hover:text-white"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
             {/* Content */}
             <div className="p-6 space-y-6">
+              {llmError && (
+                <div className="text-xs text-crisis-red bg-crisis-red/10 border border-crisis-red/20 rounded-lg p-3">
+                  {llmError}
+                </div>
+              )}
+              {llmResponse && (
+                <GlassPanel className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-text-primary">AI Summary</h3>
+                    <span className="text-[10px] text-text-muted font-[family-name:var(--font-mono)]">
+                      Confidence: {Math.round((llmResponse.confidence ?? 0) * 100)}%
+                    </span>
+                  </div>
+                  <p className="text-sm text-text-secondary">{llmResponse.summary}</p>
+                  {Array.isArray(llmResponse.key_points) && llmResponse.key_points.length > 0 && (
+                    <ul className="list-disc list-inside text-xs text-text-secondary space-y-1">
+                      {llmResponse.key_points.map((pt, i) => (
+                        <li key={i}>{pt}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {llmResponse.limitations && (
+                    <p className="text-[11px] text-text-muted">Limitations: {llmResponse.limitations}</p>
+                  )}
+                </GlassPanel>
+              )}
               {!results ? (
                 <div className="text-center py-20 text-text-muted text-sm">
                   Run a simulation first to see detailed analysis.

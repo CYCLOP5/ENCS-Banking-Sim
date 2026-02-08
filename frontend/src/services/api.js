@@ -109,3 +109,42 @@ export function runGame(params = {}) {
 export function fetchGnnRisk() {
   return request("/gnn-risk");
 }
+
+/* ── LLM Explain ───────────────────────────────────── */
+
+export function explainRun(params = {}) {
+  return request("/explain/run", {
+    method: "POST",
+    body: JSON.stringify({
+      run_id: params.runId ?? null,
+      run_type: params.runType ?? null,
+      question: params.question ?? "Summarize the simulation results.",
+    }),
+  });
+}
+
+export function explainBank(params = {}) {
+  return request("/explain/bank", {
+    method: "POST",
+    body: JSON.stringify({
+      bank_id: params.bankId,
+      run_id: params.runId ?? null,
+      question: params.question ?? "Explain this bank's risk profile.",
+    }),
+  });
+}
+
+/* ── Chatbot ───────────────────────────────────────── */
+
+export function chatWithAssistant(params = {}) {
+  return request("/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      messages: params.messages ?? [],
+      run_id: params.runId ?? null,
+      run_type: params.runType ?? null,
+      bank_id: params.bankId ?? null,
+      bank_name: params.bankName ?? null,
+    }),
+  });
+}
