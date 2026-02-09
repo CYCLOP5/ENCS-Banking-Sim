@@ -7,7 +7,7 @@
       "summary": "ENCS maps global banking fault lines, simulates cascading failures across 4,500+ institutions, predicts contagion with GNNs, and stress-tests climate shocks.",
       "highlights": [
         "Systemic Risk Intelligence platform for contagion analysis",
-        "4,500+ banks modeled, ~24T interbank volume",
+        "4,500+ banks modeled, ~47T interbank volume",
         "PNA GNN with 13-dimensional feature space",
         "Rust-based intraday simulation for speed"
       ]

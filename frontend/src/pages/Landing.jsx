@@ -159,7 +159,7 @@ export default function Landing() {
         <div className="mx-auto grid max-w-6xl grid-cols-2 md:grid-cols-4 divide-x divide-border">
           {[
             { value: "4,500+", label: "Banks Modeled", icon: Shield },
-            { value: "24T", label: "Interbank Volume", icon: TrendingDown },
+            { value: "46.39", label: "Interbank Volume", icon: TrendingDown },
             { value: "13-dim", label: "PNA Feature Space", icon: BrainCircuit },
             { value: "<1s", label: "Rust Simulation", icon: Zap },
           ].map(({ value, label, icon: Icon }, i) => (
