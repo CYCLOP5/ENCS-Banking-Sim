@@ -1,0 +1,2115 @@
+import { useState, useEffect, useCallback, useRef, useMemo, startTransition } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Play,
+  Settings,
+  BarChart3,
+  CloudLightning,
+  Gamepad2,
+  Loader2,
+  AlertTriangle,
+  TrendingDown,
+  DollarSign,
+  Users,
+  Zap,
+  ChevronRight,
+  Info,
+  RotateCcw,
+  Search,
+  Square,
+  History,
+  X,
+} from "lucide-react";
+import GlassPanel from "../components/GlassPanel";
+import MetricCard from "../components/MetricCard";
+import NetworkGraph3D from "../components/NetworkGraph3D";
+import { fetchBanks, runSimulation, runClimate, runGame } from "../services/api";
+import { preloadTopology } from "../services/topologyCache";
+import { cn, formatUSD } from "../lib/utils";
+import DetailedAnalysis from "../components/DetailedAnalysis";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Area,
+  AreaChart,
+} from "recharts";
+
+/* ── Tab Button ────────────────────────────────────────────────── */
+function TabBtn({ active, onClick, icon: Icon, label }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all",
+        active
+          ? "bg-white/[0.07] text-white border border-border-bright"
+          : "text-text-muted hover:text-text-secondary hover:bg-surface"
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+}
+
+/* ── Slider Input ──────────────────────────────────────────────── */
+function Slider({ label, value, onChange, min, max, step = 0.01, suffix = "", description }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 group relative">
+          <span className="text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+            {label}
+          </span>
+          {description && (
+            <>
+              <Info className="w-3 h-3 text-text-muted cursor-help opacity-60 hover:opacity-100 transition-opacity" />
+              <div className="absolute left-0 bottom-full mb-2 w-48 p-2 glass-bright rounded-lg text-xs text-text-secondary shadow-xl hidden group-hover:block z-50 pointer-events-none">
+                {description}
+              </div>
+            </>
+          )}
+        </div>
+        <span className="text-xs text-white font-[family-name:var(--font-mono)] font-bold">
+          {typeof value === "number" ? value.toFixed(step < 0.1 ? 2 : 0) : value}
+          {suffix}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer
+          bg-gradient-to-r from-stability-green/30 to-crisis-red/30
+          [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4
+          [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full
+          [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md
+          [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-stability-green"
+      />
+    </div>
+  );
+}
+
+/* ── Custom Select Component ───────────────────────────────────── */
+function CustomSelect({ value, onChange, options, placeholder = "Select..." }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (ref.current && !ref.current.contains(event.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedLabel = options.find((o) => o.value === value)?.label || placeholder;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between pl-3 pr-3 py-2 rounded-lg bg-white/[0.04] border border-border text-xs text-text-primary font-[family-name:var(--font-mono)] hover:bg-white/[0.08] transition-colors focus:outline-none focus:border-stability-green/40"
+      >
+        <span className="truncate">{selectedLabel}</span>
+        <ChevronRight className={cn("w-3.5 h-3.5 text-text-muted transition-transform", open ? "-rotate-90" : "rotate-90")} />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -5 }}
+            className="absolute top-full left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-lg bg-[#0B0B15] border border-border shadow-xl z-50 py-1"
+          >
+            {options.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "w-full text-left px-3 py-2 text-xs font-[family-name:var(--font-mono)] transition-colors",
+                  option.value === value
+                    ? "bg-stability-green/10 text-stability-green"
+                    : "text-text-secondary hover:bg-white/[0.04] hover:text-text-primary"
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ── Toggle Switch ─────────────────────────────────────────────── */
+function Toggle({ label, checked, onChange, description }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <span className="text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+          {label}
+        </span>
+        {description && (
+          <p className="text-[10px] text-text-muted mt-0.5">{description}</p>
+        )}
+      </div>
+      <button
+        onClick={() => onChange(!checked)}
+        className={cn(
+          "relative flex h-5 w-9 shrink-0 rounded-full transition-colors",
+          checked ? "bg-stability-green" : "bg-white/10"
+        )}
+      >
+        <span
+          className={cn(
+            "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform",
+            checked ? "translate-x-4" : "translate-x-0.5"
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
+/* ── Default Ticker ────────────────────────────────────────────── */
+function DefaultTicker({ defaults = [], distressed = [] }) {
+  if (defaults.length === 0 && distressed.length === 0) return null;
+  // Show at most 30 names to keep DOM light; full list is in detail panel
+  const visibleDefaults = defaults.slice(0, 30).map(n => ({ name: n, type: 'default' }));
+  const visibleDistressed = distressed.slice(0, 15).map(n => ({ name: n, type: 'distressed' }));
+  const visible = [...visibleDefaults, ...visibleDistressed];
+  const doubled = [...visible, ...visible];
+  // Scale duration: ~2s per name, minimum 50s — slower = less CPU
+  const duration = Math.max(50, visible.length * 2);
+  return (
+    <div className="overflow-hidden whitespace-nowrap mask-gradient">
+      <div
+        className="inline-flex gap-6"
+        style={{
+          animation: `ticker-scroll ${duration}s linear infinite`,
+          willChange: "transform",
+        }}
+      >
+        {doubled.map((item, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1.5 text-xs font-[family-name:var(--font-mono)]"
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${item.type === 'distressed' ? 'bg-orange-500' : 'bg-crisis-red'
+              }`} />
+            <span className={item.type === 'distressed' ? 'text-orange-500' : 'text-crisis-red'}>
+              {item.name}
+            </span>
+            {item.type === 'distressed' && (
+              <span className="text-[10px] text-orange-500/60 uppercase">distressed</span>
+            )}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Stable empty object so statusMap ref never changes when there's no status ── */
+const EMPTY_STATUS_MAP = Object.freeze({});
+
+/* ── Scenario Presets for Mechanical Simulation ── */
+const SCENARIOS = {
+  "2008_GFC": {
+    label: "2008 Global Financial Crisis",
+    description: "High interbank panic & fire-sale spiral",
+    params: { severity: 0.15, panicRate: 0.35, sigma: 0.20, fireSaleAlpha: 0.02, marginMultiplier: 1.5, useIntraday: true }
+  },
+  "2020_COVID": {
+    label: "2020 COVID-19 Shock",
+    description: "Massive external shock, dampened panic (stimulus)",
+    params: { severity: 0.30, panicRate: 0.10, sigma: 0.15, fireSaleAlpha: 0.01, nSteps: 40, useIntraday: true }
+  },
+  "2023_SVB": {
+    label: "2023 SVB Liquidity Run",
+    description: "Tech-focused run driven by rates & fear",
+    params: { severity: 0.05, panicRate: 0.45, marginMultiplier: 2.0, sigma: 0.12, useIntraday: true }
+  },
+  "CRYPTO_WINTER": {
+    label: "Crypto Winter (High Vol)",
+    description: "Extreme volatility & unmoored valuations",
+    params: { severity: 0.10, sigma: 0.25, fireSaleAlpha: 0.04, panicRate: 0.20, useIntraday: true }
+  },
+  "RESILIENT_DEMO": {
+    label: "Resilient System (Demo)",
+    description: "Strong CCP buffer & lower fire-sale impact prevents total collapse",
+    params: {
+      severity: 0.40,
+      panicRate: 0.05,
+      sigma: 0.05,
+      fireSaleAlpha: 0.001,
+      defaultFundRatio: 0.15,
+      useCcp: true,
+      useIntraday: true
+    }
+  }
+};
+
+/* ── Scenario Presets for Climate Simulation ── */
+const CLIMATE_SCENARIOS = {
+  "PARIS_AGREEMENT": {
+    label: "Paris Agreement Alignment",
+    description: "Ordered transition with high carbon tax but strong green subsidies",
+    params: { carbonTax: 0.8, greenSubsidy: 0.4, severity: 0.2, nSteps: 20, useIntraday: true }
+  },
+  "DISORDERLY_TRANSITION": {
+    label: "Disorderly Transition",
+    description: "Sudden policy shifts, high taxes, low subsidies, causing fire sales",
+    params: { carbonTax: 0.9, greenSubsidy: 0.05, severity: 0.6, nSteps: 15, useIntraday: true }
+  },
+  "HOT_HOUSE_WORLD": {
+    label: "Hot House World (Physical Risk)",
+    description: "Failed transition leading to severe physical asset shocks",
+    params: { carbonTax: 0.1, greenSubsidy: 0.0, severity: 0.8, nSteps: 25, useIntraday: true }
+  },
+  "TECH_BREAKTHROUGH": {
+    label: "Tech Breakthrough",
+    description: "Rapid innovation makes green assets boom; moderate tax required.",
+    params: { carbonTax: 0.3, greenSubsidy: 0.8, severity: 0.1, nSteps: 15, useIntraday: true }
+  },
+  "DELAYED_REACTION": {
+    label: "Delayed Reaction",
+    description: "Ignoring risks until too late, then panic regulation (extreme tax).",
+    params: { carbonTax: 0.95, greenSubsidy: 0.0, severity: 0.9, nSteps: 10, useIntraday: true }
+  }
+};
+
+/* ── Scenario Presets for Strategic Simulation ── */
+const STRATEGIC_SCENARIOS = {
+  "COORDINATION_FAILURE": {
+    label: "Coordination Failure",
+    description: "Fragile fundamentals + opaque info lead to self-fulfilling runs",
+    params: {
+      gameSolvency: 0.15,
+      gameRiskAversion: 2.0,
+      gameAlpha: 1.0, // Low transparency
+      gameNoiseStd: 0.2, // High private noise
+      gameHaircut: 0.4,
+      gameInterestRate: 0.10,
+      gameRecoveryRate: 0.40,
+      gameExposure: 1.0,
+      gameMarginPressure: 0.30
+    }
+  },
+  "TRANSPARENCY_SUCCESS": {
+    label: "Transparency Success",
+    description: "AI signal prevents runs despite weak fundamentals",
+    params: {
+      gameSolvency: 0.18,
+      gameRiskAversion: 1.2,
+      gameAlpha: 8.0, // High transparency
+      gameNoiseStd: 0.1,
+      gameHaircut: 0.25,
+      gameInterestRate: 0.08,
+      gameRecoveryRate: 0.45,
+      gameExposure: 1.2,
+      gameMarginPressure: 0.20
+    }
+  },
+  "FUNDAMENTAL_INSOLVENCY": {
+    label: "Fundamental Insolvency",
+    description: "Banks are truly insolvent; runs are rational and unavoidable",
+    params: {
+      gameSolvency: -0.05, // Negative equity
+      gameRiskAversion: 1.0,
+      gameAlpha: 5.0,
+      gameNoiseStd: 0.05,
+      gameHaircut: 0.3,
+      gameInterestRate: 0.12,
+      gameRecoveryRate: 0.30,
+      gameExposure: 1.0,
+      gameMarginPressure: 0.40
+    }
+  },
+  "RATIONAL_PANIC": {
+    label: "Rational Panic",
+    description: "High transparency reveals slight insolvency, causing immediate valid runs.",
+    params: {
+      gameSolvency: -0.02,
+      gameRiskAversion: 1.5,
+      gameAlpha: 10.0, // Very high transparency -> truth revealed
+      gameNoiseStd: 0.05,
+      gameHaircut: 0.3,
+      gameInterestRate: 0.10,
+      gameRecoveryRate: 0.35,
+      gameExposure: 1.0,
+      gameMarginPressure: 0.30
+    }
+  },
+  "NOISY_CONFUSION": {
+    label: "Noisy Confusion",
+    description: "High noise & fear cause runs even on solvent banks (coordination failure).",
+    params: {
+      gameSolvency: 0.15, // Actually solvent
+      gameRiskAversion: 2.5, // Very fearful
+      gameAlpha: 0.5, // Extremely opaque/noisy public signal
+      gameNoiseStd: 0.4, // High private noise
+      gameHaircut: 0.5, // High penalty for staying
+      gameInterestRate: 0.15,
+      gameRecoveryRate: 0.20, // Very low recovery fear
+      gameExposure: 0.8,
+      gameMarginPressure: 0.50
+    }
+  },
+  "POSITIVE_DIVIDEND": {
+    label: "Positive Dividend (Wait for it)",
+    description: "High noise causes panic on solvent banks (Opaque), but AI clarity saves them (Transparent).",
+    params: {
+      gameSolvency: 0.12, // Clearly solvent (if you know the truth)
+      gameRiskAversion: 4.0, // Extremely paranoid investors
+      gameAlpha: 10.0, // Crystal clear AI signal
+      gameNoiseStd: 0.8, // Total chaos in the opaque world
+      gameHaircut: 0.3,
+      gameInterestRate: 0.04, // Low interest rate to help solvency
+      gameRecoveryRate: 0.25, // Low recovery rate adds to fear
+      gameExposure: 7.0, // High exposure amplifies the stakes
+      gameMarginPressure: 0.30
+    }
+  }
+};
+
+/* ═══════════════════════════════════════════════════════════════════
+   SIMULATION DASHBOARD
+   ═══════════════════════════════════════════════════════════════════ */
+
+export default function Simulation() {
+  // ── State ──
+  const [tab, setTab] = useState("mechanical");
+  const [topology, setTopology] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [simulating, setSimulating] = useState(false);
+  const [results, setResults] = useState(null);
+  const [prevResults, setPrevResults] = useState(null); // Comparison state
+  const [selectedNode, setSelectedNode] = useState(null); // Inspector state: node object
+  const [error, setError] = useState(null);
+  const containerRef = useRef(null);
+  const graphRef = useRef(null);
+  const [dims, setDims] = useState({ w: 800, h: 600 });
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [liteMode, setLiteMode] = useState(true);
+
+  // ── Contagion cascade animation ──
+  const [contagionSet, setContagionSet] = useState(null);   // Set<nodeId>
+  const [contagionLinks, setContagionLinks] = useState(null); // Set<"src-tgt">
+  const [contagionActive, setContagionActive] = useState(false);
+  const contagionTimerRef = useRef(null);
+
+  // ── Game playback animation ──
+  const [gameStep, setGameStep] = useState(null);              // current step index (0-based)
+  const [gamePlaybackActive, setGamePlaybackActive] = useState(false);
+  const gamePlaybackTimerRef = useRef(null);
+  const [gameRegime, setGameRegime] = useState("opaque");     // "opaque" | "transparent"
+  const [gameStatusMap, setGameStatusMap] = useState({});      // {topologyNodeId: "WITHDRAW"|"ROLL_OVER"}
+  const [gameFlippedSet, setGameFlippedSet] = useState(null);  // Set<nodeId>
+
+  // ── Bank list for selector ──
+  const [bankList, setBankList] = useState([]);
+  const [triggerIdx, setTriggerIdx] = useState(0);
+  const [bankSearch, setBankSearch] = useState("");
+
+  // ── Controls ──
+  const [severity, setSeverity] = useState(1.0);
+  const [nSteps, setNSteps] = useState(10);
+  const [panicRate, setPanicRate] = useState(0.1);
+  const [fireSaleAlpha, setFireSaleAlpha] = useState(0.002);
+  const [useCcp, setUseCcp] = useState(false);
+  const [clearingRate, setClearingRate] = useState(0.5);
+  const [maxIter, setMaxIter] = useState(100);
+  const [tolerance, setTolerance] = useState(1e-5);
+  const [distressThreshold, setDistressThreshold] = useState(0.95);
+  const [sigma, setSigma] = useState(0.05);
+  const [marginMultiplier, setMarginMultiplier] = useState(1.0);
+  const [defaultFundRatio, setDefaultFundRatio] = useState(0.05);
+  const [useIntraday, setUseIntraday] = useState(true);
+  // Circuit Breaker
+  const [circuitBreakerEnabled, setCircuitBreakerEnabled] = useState(false);
+  const [circuitBreakerThreshold, setCircuitBreakerThreshold] = useState(0.15);
+  // Climate
+  const [carbonTax, setCarbonTax] = useState(0.5);
+  const [greenSubsidy, setGreenSubsidy] = useState(0.1);
+  const [climateUseIntraday, setClimateUseIntraday] = useState(true);
+  // Game
+  const [gameSolvency, setGameSolvency] = useState(0.2);
+  const [gameNBanks, setGameNBanks] = useState(20);
+  const [gameNSteps, setGameNSteps] = useState(5);
+  const [gameInterestRate, setGameInterestRate] = useState(0.10);
+  const [gameRecoveryRate, setGameRecoveryRate] = useState(0.40);
+  const [gameRiskAversion, setGameRiskAversion] = useState(1.0);
+  const [gameNoiseStd, setGameNoiseStd] = useState(0.08);
+  const [gameHaircut, setGameHaircut] = useState(0.20);
+  const [gameMarginPressure, setGameMarginPressure] = useState(0.30);
+  const [gameExposure, setGameExposure] = useState(1.0);
+  const [gameAlpha, setGameAlpha] = useState(5.0); // Public Signal Precision
+  const [selectedScenario, setSelectedScenario] = useState("");
+
+  /* ── Apply Scenario Preset ── */
+  const applyScenario = (key) => {
+    setSelectedScenario(key);
+    // Check all scenario dictionaries
+    const s = SCENARIOS[key] || CLIMATE_SCENARIOS[key] || STRATEGIC_SCENARIOS[key];
+    if (!s) return;
+
+    // Mechanical
+    if (s.params.severity !== undefined) setSeverity(s.params.severity);
+    if (s.params.panicRate !== undefined) setPanicRate(s.params.panicRate);
+    if (s.params.sigma !== undefined) setSigma(s.params.sigma);
+    if (s.params.fireSaleAlpha !== undefined) setFireSaleAlpha(s.params.fireSaleAlpha);
+    if (s.params.marginMultiplier !== undefined) setMarginMultiplier(s.params.marginMultiplier);
+    if (s.params.nSteps !== undefined) setNSteps(s.params.nSteps);
+    if (s.params.useIntraday !== undefined) setUseIntraday(s.params.useIntraday);
+    if (s.params.useCcp !== undefined) setUseCcp(s.params.useCcp);
+    if (s.params.clearingRate !== undefined) setClearingRate(s.params.clearingRate);
+    if (s.params.defaultFundRatio !== undefined) setDefaultFundRatio(s.params.defaultFundRatio);
+
+    // Climate
+    if (s.params.carbonTax !== undefined) setCarbonTax(s.params.carbonTax);
+    if (s.params.greenSubsidy !== undefined) setGreenSubsidy(s.params.greenSubsidy);
+
+    // Strategic
+    if (s.params.gameSolvency !== undefined) setGameSolvency(s.params.gameSolvency);
+    if (s.params.gameRiskAversion !== undefined) setGameRiskAversion(s.params.gameRiskAversion);
+    if (s.params.gameAlpha !== undefined) setGameAlpha(s.params.gameAlpha);
+    if (s.params.gameNoiseStd !== undefined) setGameNoiseStd(s.params.gameNoiseStd);
+    if (s.params.gameHaircut !== undefined) setGameHaircut(s.params.gameHaircut);
+    if (s.params.gameInterestRate !== undefined) setGameInterestRate(s.params.gameInterestRate);
+    if (s.params.gameRecoveryRate !== undefined) setGameRecoveryRate(s.params.gameRecoveryRate);
+    if (s.params.gameExposure !== undefined) setGameExposure(s.params.gameExposure);
+    if (s.params.gameMarginPressure !== undefined) setGameMarginPressure(s.params.gameMarginPressure);
+  };
+
+
+  // ── Load topology + bank list ──
+  useEffect(() => {
+    preloadTopology()
+      .then(setTopology)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+    fetchBanks()
+      .then((data) => setBankList(data.banks || []))
+      .catch(() => { });
+  }, []);
+
+  // ── Resize observer (debounced to avoid re-renders on every frame) ──
+  useEffect(() => {
+    if (!containerRef.current) return;
+    let rafId = null;
+    const ro = new ResizeObserver((entries) => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const { width, height } = entries[0].contentRect;
+        setDims((prev) =>
+          prev.w === Math.round(width) && prev.h === Math.round(height)
+            ? prev
+            : { w: Math.round(width), h: Math.round(height) }
+        );
+      });
+    });
+    ro.observe(containerRef.current);
+    return () => { ro.disconnect(); if (rafId) cancelAnimationFrame(rafId); };
+  }, []);
+
+  // ── Build status map from results (memoized for reference stability) ──
+  // Dep is results?.status — NOT results — so game results ({opaque,transparent})
+  // don't produce a new {} ref, which would bust enriched's memo and crash the layout.
+  const statusArray = results?.status;
+  const statusMap = useMemo(() => {
+    if (!statusArray) return EMPTY_STATUS_MAP;
+    const map = {};
+    statusArray.forEach((s, i) => { map[i] = s; });
+    return map;
+  }, [statusArray]);
+
+  // ── Stop contagion animation ──
+  const stopContagion = useCallback(() => {
+    if (contagionTimerRef.current) {
+      clearInterval(contagionTimerRef.current);
+      contagionTimerRef.current = null;
+    }
+    setContagionActive(false);
+    setContagionSet(null);
+    setContagionLinks(null);
+    if (graphRef.current) graphRef.current.zoomToFit(1000);
+  }, []);
+
+  // ── Stop game playback ──
+  const stopGamePlayback = useCallback(() => {
+    if (gamePlaybackTimerRef.current) {
+      clearInterval(gamePlaybackTimerRef.current);
+      gamePlaybackTimerRef.current = null;
+    }
+    setGamePlaybackActive(false);
+    setGameStep(null);
+    setGameStatusMap({});
+    setGameFlippedSet(null);
+    if (graphRef.current) graphRef.current.zoomToFit(1000);
+  }, []);
+
+  // ── Unified tab-switch handler ──
+  // Stops animations & physics synchronously, then defers the heavy state
+  // updates (setResults → enriched recompute) via startTransition so the
+  // browser stays responsive during the graph teardown.
+  const switchTab = useCallback((newTab) => {
+    if (tab === newTab) return;
+    // 1. Stop running animations (clears timers — side-effect, not deferred)
+    stopContagion();
+    stopGamePlayback();
+    // 2. Freeze the force simulation *before* clearing data to prevent
+    //    the engine from trying to re-layout during the transition.
+    graphRef.current?.stopPhysics();
+    // 3. Defer expensive state updates so the tab highlight can paint first
+    startTransition(() => {
+      setResults(null);
+      setPrevResults(null);
+      setTab(newTab);
+    });
+  }, [tab, stopContagion, stopGamePlayback]);
+
+  // ── Start game playback ──
+  const startGamePlayback = useCallback(() => {
+    if (!topology || !results?.opaque) return;
+    // Clear any previous
+    if (gamePlaybackTimerRef.current) clearInterval(gamePlaybackTimerRef.current);
+    stopContagion(); // ensure contagion is off
+
+    const regime = results[gameRegime] ?? results.opaque;
+    const timeline = regime?.timeline;
+    if (!timeline?.decisions?.length) return;
+
+    const nStepsGame = timeline.decisions.length;
+    const nAgents = timeline.decisions[0]?.length ?? 0;
+    const topoNodes = topology.nodes;
+    const mappableCount = Math.min(nAgents, topoNodes.length);
+
+    // Stop physics for clean visualization
+    if (graphRef.current) graphRef.current.stopPhysics();
+
+    let stepIdx = 0;
+    let prevDecisions = null;
+
+    // Initial step
+    const buildStepState = (sIdx) => {
+      const decisions = timeline.decisions[sIdx];
+      const statusObj = {};
+      const flipped = new Set();
+
+      for (let i = 0; i < mappableCount; i++) {
+        const nodeId = topoNodes[i].id;
+        statusObj[nodeId] = decisions[i]; // "WITHDRAW" or "ROLL_OVER"
+        if (prevDecisions && prevDecisions[i] !== decisions[i]) {
+          flipped.add(nodeId);
+        }
+      }
+      prevDecisions = [...decisions];
+      return { statusObj, flipped };
+    };
+
+    setGamePlaybackActive(true);
+    // Show first step immediately
+    const { statusObj, flipped } = buildStepState(0);
+    setGameStep(0);
+    setGameStatusMap(statusObj);
+    setGameFlippedSet(flipped);
+
+    // Zoom to the subgraph of game agents
+    if (graphRef.current && mappableCount > 0) {
+      graphRef.current.focusNode(topoNodes[0].id, 250);
+    }
+
+    stepIdx = 1;
+    gamePlaybackTimerRef.current = setInterval(() => {
+      if (stepIdx >= nStepsGame) {
+        clearInterval(gamePlaybackTimerRef.current);
+        gamePlaybackTimerRef.current = null;
+        // Zoom out after finishing
+        if (graphRef.current) graphRef.current.zoomToFit(2000);
+        // User requested to keep state visible
+        // setTimeout(() => {
+        //   setGamePlaybackActive(false);
+        //   setGameFlippedSet(null);
+        // }, 3000);
+        return;
+      }
+
+      const { statusObj: sObj, flipped: fl } = buildStepState(stepIdx);
+      setGameStep(stepIdx);
+      setGameStatusMap(sObj);
+      setGameFlippedSet(fl);
+
+      // Camera: follow a withdrawing node for dramatic effect
+      if (graphRef.current && stepIdx < 10) {
+        const withdrawIds = Object.entries(sObj)
+          .filter(([, d]) => d === "WITHDRAW")
+          .map(([id]) => id);
+        if (withdrawIds.length > 0) {
+          graphRef.current.focusNode(withdrawIds[0], 200 + stepIdx * 20);
+        }
+      }
+
+      stepIdx++;
+    }, 2500); // 2.5s per step - Slowed down to observe rollover transitions
+  }, [topology, results, gameRegime, stopContagion]);
+
+  // Auto-start game playback when strategic results arrive
+  useEffect(() => {
+    // Only auto-start if we haven't already finished or if results changed
+    if (tab === "strategic" && results?.opaque) {
+      // If we already have a status map, don't restart (persistence)
+      // unless it's a fresh run
+      if (!gameStatusMap || Object.keys(gameStatusMap).length === 0) {
+        startGamePlayback();
+      }
+    }
+    return () => {
+      if (gamePlaybackTimerRef.current) clearInterval(gamePlaybackTimerRef.current);
+    };
+  }, [results, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear game state ONLY when switching tabs (persistence)
+  useEffect(() => {
+    if (tab !== "strategic") {
+      setGameStatusMap({});
+      setGameFlippedSet(null);
+      setGamePlaybackActive(false);
+      if (gamePlaybackTimerRef.current) {
+        clearInterval(gamePlaybackTimerRef.current);
+        gamePlaybackTimerRef.current = null;
+      }
+    }
+  }, [tab]);
+
+  // Restart playback when regime toggle changes
+  useEffect(() => {
+    if (tab === "strategic" && results?.opaque && !simulating) {
+      startGamePlayback();
+    }
+  }, [gameRegime]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear selected scenario when switching tabs
+  useEffect(() => {
+    setSelectedScenario("");
+  }, [tab]);
+
+  // ── BFS contagion animation ──
+  const startContagion = useCallback(() => {
+    if (!topology || !results?.status) return;
+    // Clear previous animation
+    if (contagionTimerRef.current) clearInterval(contagionTimerRef.current);
+
+    // Build adjacency from topology links (with edge info)
+    const adj = new Map();       // nodeId -> [{neighbor, src, tgt}]
+    for (const l of topology.links) {
+      const src = l.source?.id ?? l.source;
+      const tgt = l.target?.id ?? l.target;
+      if (!adj.has(src)) adj.set(src, []);
+      if (!adj.has(tgt)) adj.set(tgt, []);
+      adj.get(src).push({ neighbor: tgt, key: `${src}-${tgt}` });
+      adj.get(tgt).push({ neighbor: src, key: `${tgt}-${src}` });
+    }
+
+    // Collect all defaulted/distressed node ids
+    const affected = new Set();
+    results.status.forEach((s, i) => {
+      if (s === "Default" || s === "Distressed") affected.add(i);
+    });
+    if (affected.size === 0) return;
+
+    // Find the trigger bank (index 0 from API, or first Default)
+    const trigger = results.trigger_idx ?? [...affected][0] ?? 0;
+
+    // BFS from trigger through ALL nodes (not just affected) to build reachable graph
+    // This ensures we trace the transaction path even through safe intermediaries
+    const bfsOrder = [];     // array of { nodeId, parentId, linkKey } in BFS order
+    const visited = new Set();
+    let frontier = [{ nodeId: trigger, parentId: null, linkKey: null }];
+    visited.add(trigger);
+    bfsOrder.push({ nodeId: trigger, parentId: null, linkKey: null });
+
+    while (frontier.length > 0) {
+      const next = [];
+      for (const { nodeId } of frontier) {
+        for (const { neighbor, key } of (adj.get(nodeId) || [])) {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            const entry = { nodeId: neighbor, parentId: nodeId, linkKey: key };
+            bfsOrder.push(entry);
+            // Only expand further through affected nodes to trace contagion paths
+            if (affected.has(neighbor)) {
+              next.push(entry);
+            }
+          }
+        }
+      }
+      frontier = next;
+    }
+
+    // Add any affected nodes unreachable from trigger
+    const unreached = [...affected].filter((id) => !visited.has(id));
+    for (const id of unreached) {
+      bfsOrder.push({ nodeId: id, parentId: null, linkKey: null });
+    }
+
+    // Build animation steps: reveal 1-3 nodes per step for slow cascade
+    // Prioritize affected nodes; batch safe intermediaries together
+    const steps = []; // each step: { nodes: [id], links: [key] }
+    let currentStep = { nodes: [], links: [] };
+    let safeBuffer = { nodes: [], links: [] };
+
+    for (const entry of bfsOrder) {
+      if (affected.has(entry.nodeId)) {
+        // Flush any safe buffer first (as background context)
+        if (safeBuffer.nodes.length > 0) {
+          steps.push({ ...safeBuffer });
+          safeBuffer = { nodes: [], links: [] };
+        }
+        // Each affected node gets its own step for dramatic reveal
+        currentStep = { nodes: [entry.nodeId], links: entry.linkKey ? [entry.linkKey] : [] };
+        steps.push(currentStep);
+      } else {
+        // Safe nodes: batch into groups of 5
+        safeBuffer.nodes.push(entry.nodeId);
+        if (entry.linkKey) safeBuffer.links.push(entry.linkKey);
+        if (safeBuffer.nodes.length >= 5) {
+          steps.push({ ...safeBuffer });
+          safeBuffer = { nodes: [], links: [] };
+        }
+      }
+    }
+    if (safeBuffer.nodes.length > 0) steps.push(safeBuffer);
+
+    // Cap total steps to 50 (merge late steps)
+    const MAX_STEPS = 50;
+    if (steps.length > MAX_STEPS) {
+      const merged = { nodes: [], links: [] };
+      for (let i = MAX_STEPS - 1; i < steps.length; i++) {
+        merged.nodes.push(...steps[i].nodes);
+        merged.links.push(...steps[i].links);
+      }
+      steps.length = MAX_STEPS - 1;
+      steps.push(merged);
+    }
+
+    // Animate step by step
+    let stepIdx = 0;
+    const revealedNodes = new Set();
+    const revealedLinks = new Set();
+    setContagionActive(true);
+    setContagionSet(new Set());
+    setContagionLinks(new Set());
+
+    // FIX: Stop physics so nodes stop moving while we zoom
+    if (graphRef.current) {
+      graphRef.current.stopPhysics();
+    }
+
+    // Zoom into trigger node first
+    if (graphRef.current) {
+      graphRef.current.focusNode(trigger, 180);
+    }
+
+    contagionTimerRef.current = setInterval(() => {
+      if (stepIdx >= steps.length) {
+        clearInterval(contagionTimerRef.current);
+        contagionTimerRef.current = null;
+        // Zoom out to see everything
+        if (graphRef.current) graphRef.current.zoomToFit(2000);
+        // User requested to keep state visible
+        // setTimeout(() => {
+        //   setContagionActive(false);
+        //   setContagionLinks(null);
+        // }, 3000);
+        return;
+      }
+
+      const step = steps[stepIdx];
+      for (const nid of step.nodes) revealedNodes.add(nid);
+      for (const lk of step.links) revealedLinks.add(lk);
+      setContagionSet(new Set(revealedNodes));
+      setContagionLinks(new Set(revealedLinks));
+
+      // Camera follows the cascade for the first 10 affected-node steps
+      const affectedInStep = step.nodes.filter((n) => affected.has(n));
+      if (graphRef.current && affectedInStep.length > 0 && stepIdx < 15) {
+        const dist = 180 + stepIdx * 25; // gradually pull back from farther away
+        graphRef.current.focusNode(affectedInStep[0], dist);
+      } else if (graphRef.current && stepIdx === 15) {
+        graphRef.current.zoomToFit(1500);
+      }
+
+      stepIdx++;
+    }, 1400); // 1.4 seconds per step — slow, dramatic cascade
+  }, [topology, results]);
+
+  // Auto-start contagion on new results
+  useEffect(() => {
+    if (results?.status) startContagion();
+    return () => {
+      if (contagionTimerRef.current) clearInterval(contagionTimerRef.current);
+    };
+  }, [results]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Execute simulation ──
+  const execute = useCallback(async () => {
+    setSimulating(true);
+    setError(null);
+    try {
+      let res;
+      if (tab === "climate") {
+        res = await runClimate({
+          carbonTax,
+          greenSubsidy,
+          useIntraday: climateUseIntraday,
+          triggerIdx,
+          severity,
+          nSteps,
+          circuitBreakerEnabled,
+          circuitBreakerThreshold,
+        });
+      } else if (tab === "strategic") {
+        res = await runSimulation({
+          useStrategic: true,
+          strategicAlpha: gameAlpha,
+          strategicRiskAversion: gameRiskAversion,
+          strategicInterestRate: gameInterestRate,
+          strategicRecoveryRate: gameRecoveryRate,
+          strategicNoiseStd: gameNoiseStd,
+          strategicHaircut: gameHaircut,
+          strategicMarginPressure: gameMarginPressure,
+          strategicExposure_scale: gameExposure,
+          nSteps: gameNSteps,
+          triggerIdx,
+          useIntraday: true,
+        });
+      } else {
+        res = await runSimulation({
+          triggerIdx,
+          severity,
+          maxIter,
+          tolerance,
+          distressThreshold,
+          useIntraday,
+          nSteps,
+          sigma,
+          panicRate,
+          fireSaleAlpha,
+          marginMultiplier,
+          useCcp,
+          clearingRate,
+          defaultFundRatio,
+          circuitBreakerEnabled,
+          circuitBreakerThreshold,
+        });
+      }
+      setPrevResults(results);
+      setResults(res);
+      if (res?.run_id) {
+        const runType = tab === "strategic" ? "game" : tab;
+        localStorage.setItem("encs:lastRunId", res.run_id);
+        localStorage.setItem("encs:lastRunType", runType);
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSimulating(false);
+    }
+  }, [
+    tab, triggerIdx, severity, nSteps, panicRate, fireSaleAlpha, useCcp, clearingRate,
+    maxIter, tolerance, distressThreshold, sigma, marginMultiplier, defaultFundRatio, useIntraday,
+    carbonTax, greenSubsidy, climateUseIntraday,
+    gameSolvency, gameNBanks, gameNSteps, gameInterestRate, gameRecoveryRate,
+    gameRiskAversion, gameNoiseStd, gameHaircut, gameMarginPressure, gameExposure,
+    circuitBreakerEnabled, circuitBreakerThreshold,
+  ]);
+
+  // ── Timeline chart data ──
+  const activeResults = tab === "strategic" ? results?.opaque : results;
+  const timelineData =
+    activeResults?.equity_loss_timeline?.map((val, i) => ({
+      step: i,
+      loss: val / 1e9,
+      defaults: activeResults.defaults_timeline?.[i] ?? 0,
+      price: activeResults.price_timeline?.[i] ?? 1,
+      gridlock: activeResults.gridlock_timeline?.[i] ?? 0,
+      margin: activeResults.margin_calls_timeline?.[i] ? activeResults.margin_calls_timeline[i] / 1e6 : 0, // Millions
+      belief: activeResults.avg_belief_timeline?.[i] ?? 0,
+      runRate: activeResults.run_fraction_timeline?.[i] ?? 0,
+    })) ?? [];
+
+  // ── Defaulted & distressed bank names ──
+  const defaultedBanks = [];
+  const distressedBanks = [];
+  if (results?.status && results?.bank_names) {
+    results.status.forEach((s, i) => {
+      if (s === "Default" && results.bank_names[i]) {
+        defaultedBanks.push(results.bank_names[i].slice(0, 30));
+      } else if (s === "Distressed" && results.bank_names[i]) {
+        distressedBanks.push(results.bank_names[i].slice(0, 30));
+      }
+    });
+  }
+
+  // Game results
+  const gameData = tab === "strategic" && results?.opaque ? results : null;
+
+  return (
+    <div className="relative h-screen w-screen overflow-hidden pt-16">
+      {/* ── 3D GRAPH CANVAS ─────────────────────────── */}
+      <div ref={containerRef} className="absolute inset-0 pt-16">
+        {loading ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-stability-green" />
+          </div>
+        ) : topology ? (
+          <NetworkGraph3D
+            ref={graphRef}
+            graphData={topology}
+            statusMap={statusMap}
+            contagionSet={contagionSet}
+            contagionLinks={contagionLinks}
+            contagionActive={contagionActive}
+            gameStatusMap={gameStatusMap}
+            gameActive={gamePlaybackActive}
+            gameFlippedSet={gameFlippedSet}
+            width={dims.w}
+            height={dims.h}
+            maxNodes={liteMode ? 500 : Infinity}
+            onNodeClick={(node) => {
+              setSelectedNode(node);
+              if (graphRef.current && node) {
+                graphRef.current.focusNode(node.id, 100);
+              }
+            }}
+            onBackgroundClick={() => setSelectedNode(null)}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center text-text-muted text-sm">
+            Failed to load network topology
+          </div>
+        )}
+      </div>
+
+      {/* ── HUD OVERLAY ─────────────────────────────── */}
+
+      {/* Left Control Panel */}
+      <div data-lenis-prevent className="absolute left-4 top-20 bottom-4 w-80 z-20 flex flex-col gap-3 overflow-auto scrollbar-thin pr-1">
+        {/* Tab selection */}
+        <GlassPanel className="!p-3">
+          <div className="flex gap-1.5 flex-wrap">
+            <TabBtn
+              active={tab === "mechanical"}
+              onClick={() => switchTab("mechanical")}
+              icon={Settings}
+              label="Mechanical"
+            />
+            <TabBtn
+              active={tab === "strategic"}
+              onClick={() => switchTab("strategic")}
+              icon={Gamepad2}
+              label="Strategic"
+            />
+            <TabBtn
+              active={tab === "climate"}
+              onClick={() => switchTab("climate")}
+              icon={CloudLightning}
+              label="Climate"
+            />
+          </div>
+        </GlassPanel>
+
+        {/* Controls */}
+        <GlassPanel className="space-y-4 flex-1 overflow-auto">
+          <div className="flex items-center gap-2 mb-2">
+            <Settings className="h-4 w-4 text-text-secondary" />
+            <span className="text-xs font-[family-name:var(--font-mono)] uppercase tracking-wider text-text-secondary">
+              {tab === "mechanical"
+                ? "Shock Parameters"
+                : tab === "climate"
+                  ? "Climate Scenario"
+                  : "Game Theory"}
+            </span>
+          </div>
+
+          <AnimatePresence mode="wait">
+            {tab === "mechanical" && (
+              <motion.div
+                key="mech"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="space-y-4"
+              >
+                {/* Scenario Selector */}
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    <History className="w-3 h-3" />
+                    Load Historical Scenario
+                  </span>
+                  <div className="relative">
+                    <select
+                      onChange={(e) => applyScenario(e.target.value)}
+                      defaultValue=""
+                      className="w-full pl-3 pr-8 py-2 rounded-lg bg-white/[0.04] border border-border text-xs text-text-primary
+                        font-[family-name:var(--font-mono)] appearance-none focus:outline-none focus:border-stability-green/40 transition-colors cursor-pointer"
+                    >
+                      <option value="" disabled>Select a preset...</option>
+                      {Object.entries(SCENARIOS).map(([key, s]) => (
+                        <option key={key} value={key} className="bg-void-panel text-text-primary">
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                      <ChevronRight className="w-3.5 h-3.5 text-text-muted rotate-90" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-border" />
+
+                {/* Trigger Bank Selector */}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    Trigger Bank
+                  </span>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted pointer-events-none" />
+                    <input
+                      type="text"
+                      value={bankSearch}
+                      onChange={(e) => setBankSearch(e.target.value)}
+                      placeholder="Search banks..."
+                      className="w-full pl-8 pr-3 py-2 rounded-lg bg-white/[0.04] border border-border text-xs text-text-primary
+                        font-[family-name:var(--font-mono)] placeholder:text-text-muted/60
+                        focus:outline-none focus:border-stability-green/40 transition-colors"
+                    />
+                  </div>
+                  {bankList.length > 0 && (
+                    <div className="max-h-32 overflow-auto rounded-lg border border-border bg-void-panel">
+                      {bankList
+                        .filter((b) =>
+                          bankSearch
+                            ? b.name.toLowerCase().includes(bankSearch.toLowerCase())
+                            : true
+                        )
+                        .slice(0, 50)
+                        .map((b) => (
+                          <button
+                            key={b.id}
+                            onClick={() => {
+                              setTriggerIdx(b.id);
+                              setBankSearch(b.name);
+                            }}
+                            className={cn(
+                              "w-full text-left px-3 py-1.5 text-[11px] font-[family-name:var(--font-mono)] transition-colors truncate",
+                              b.id === triggerIdx
+                                ? "bg-crisis-red/15 text-crisis-red"
+                                : "text-text-secondary hover:bg-white/[0.04] hover:text-text-primary"
+                            )}
+                          >
+                            {b.name.slice(0, 40)}
+                            <span className="ml-1 text-text-muted">
+                              · ${(b.total_assets / 1e9).toFixed(0)}B
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+
+                <Slider
+                  label="Shock Severity"
+                  value={severity}
+                  onChange={setSeverity}
+                  min={0}
+                  max={1}
+                  suffix="%"
+                  description="Percentage devaluation of external assets during stress event"
+                />
+
+                <div className="border-t border-border pt-3">
+                  <Toggle
+                    label="Intraday Engine"
+                    checked={useIntraday}
+                    onChange={setUseIntraday}
+                    description="Run multi-step intraday simulation"
+                  />
+                </div>
+
+                {useIntraday && (
+                  <>
+                    <Slider
+                      label="Intraday Steps"
+                      value={nSteps}
+                      onChange={(v) => setNSteps(Math.round(v))}
+                      min={1}
+                      max={50}
+                      step={1}
+                      description="Number of discrete time steps for simulation convergence"
+                    />
+                    <Slider
+                      label="Market Uncertainty (σ)"
+                      value={sigma}
+                      onChange={setSigma}
+                      min={0.01}
+                      max={0.30}
+                      step={0.01}
+                      description="Volatility of asset prices affecting margin calls"
+                    />
+                    <Slider
+                      label="Panic Rate"
+                      value={panicRate}
+                      onChange={setPanicRate}
+                      min={0}
+                      max={0.5}
+                      description="Probability of bank run propagation per step"
+                    />
+                    <Slider
+                      label="Fire-Sale α"
+                      value={fireSaleAlpha}
+                      onChange={setFireSaleAlpha}
+                      min={0}
+                      max={0.05}
+                      step={0.001}
+                      description="Price impact factor: how much selling reduces asset price"
+                    />
+                    <Slider
+                      label="Margin Sensitivity"
+                      value={marginMultiplier}
+                      onChange={setMarginMultiplier}
+                      min={0}
+                      max={5}
+                      step={0.1}
+                      description="Multiplier for collateral requirements based on volatility"
+                    />
+                  </>
+                )}
+
+                <div className="border-t border-border pt-3 space-y-3">
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    Convergence
+                  </span>
+                  <Slider
+                    label="Distress Threshold"
+                    value={distressThreshold}
+                    onChange={setDistressThreshold}
+                    min={0}
+                    max={1}
+                    description="Capital ratio below which a bank is considered in default"
+                  />
+                  <Slider
+                    label="Max Iterations"
+                    value={maxIter}
+                    onChange={(v) => setMaxIter(Math.round(v))}
+                    min={10}
+                    max={500}
+                    step={10}
+                    description="Limit on calculation cycles to prevent infinite loops"
+                  />
+                </div>
+
+                <div className="border-t border-border pt-3">
+                  <Toggle
+                    label="Central Clearing (CCP)"
+                    checked={useCcp}
+                    onChange={setUseCcp}
+                    description="Route edges through hub-and-spoke"
+                  />
+                  {useCcp && (
+                    <div className="mt-3 space-y-3">
+                      <Slider
+                        label="Cleared Volume"
+                        value={clearingRate}
+                        onChange={setClearingRate}
+                        min={0}
+                        max={1}
+                        suffix="%"
+                        description="Percentage of total interbank exposure routed through CCP"
+                      />
+                      <Slider
+                        label="Default Fund %"
+                        value={defaultFundRatio}
+                        onChange={setDefaultFundRatio}
+                        min={0.01}
+                        max={0.25}
+                        step={0.01}
+                        description="CCP buffer required as pre-funded capital"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-border pt-3">
+                  <Toggle
+                    label="Circuit Breaker"
+                    checked={circuitBreakerEnabled}
+                    onChange={setCircuitBreakerEnabled}
+                    description="Halt trading when price drops below threshold"
+                  />
+                  {circuitBreakerEnabled && (
+                    <div className="mt-3 space-y-3">
+                      <Slider
+                        label="Halt Threshold"
+                        value={circuitBreakerThreshold}
+                        onChange={setCircuitBreakerThreshold}
+                        min={0.05}
+                        max={0.50}
+                        step={0.01}
+                        suffix="%"
+                        description="Price drop percentage that triggers valid trading halt"
+                      />
+                      <p className="text-[10px] text-text-muted font-[family-name:var(--font-mono)]">
+                        Trading halts if asset price drops {(circuitBreakerThreshold * 100).toFixed(0)}% from par
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {tab === "climate" && (
+              <motion.div
+                key="climate"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="space-y-4"
+              >
+                {/* Climate Scenario Selector */}
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    <CloudLightning className="w-3 h-3" />
+                    Climate Scenarios
+                  </span>
+                  <CustomSelect
+                    value={selectedScenario}
+                    onChange={(val) => applyScenario(val)}
+                    options={Object.entries(CLIMATE_SCENARIOS).map(([key, s]) => ({
+                      value: key,
+                      label: s.label
+                    }))}
+                    placeholder="Select a scenario..."
+                  />
+                </div>
+
+                <div className="border-t border-border" />
+
+                <Slider
+                  label="Carbon Tax Severity"
+                  value={carbonTax}
+                  onChange={setCarbonTax}
+                  min={0}
+                  max={1}
+                  suffix="%"
+                  description="Tax rate applied to brown asset holdings"
+                />
+                <Slider
+                  label="Green Subsidy"
+                  value={greenSubsidy}
+                  onChange={setGreenSubsidy}
+                  min={0}
+                  max={0.5}
+                  suffix="%"
+                  description="Direct capital injection for green asset holdings"
+                />
+
+                <div className="border-t border-border pt-3">
+                  <Toggle
+                    label="Intraday Engine"
+                    checked={climateUseIntraday}
+                    onChange={setClimateUseIntraday}
+                    description="Multi-step cascade after transition shock"
+                  />
+                </div>
+
+                {climateUseIntraday && (
+                  <>
+                    <Slider
+                      label="Intraday Steps"
+                      value={nSteps}
+                      onChange={(v) => setNSteps(Math.round(v))}
+                      min={1}
+                      max={50}
+                      step={1}
+                      description="Multi-step cascade after transition shock"
+                    />
+
+
+                    <div className="border-t border-border" />
+
+                    <Slider
+                      label="Shock Severity"
+                      value={severity}
+                      onChange={setSeverity}
+                      min={0}
+                      max={1}
+                      suffix="%"
+                      description="Percentage devaluation of external assets during stress event"
+                    />
+                  </>
+                )}
+
+                <div className="glass rounded-lg p-3 text-[11px] text-text-muted">
+                  <span className="text-stability-green font-bold">Green Swan:</span>{" "}
+                  Carbon tax reprices brown assets, subsidy buffers green-aligned banks.
+                  Intraday engine cascades fire-sale spirals through the network.
+                </div>
+              </motion.div>
+            )}
+
+            {tab === "strategic" && (
+              <motion.div
+                key="strat"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                className="space-y-4"
+              >
+                {/* Strategic Scenario Selector */}
+                <div className="space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-text-secondary uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    <History className="w-3 h-3" />
+                    Strategic Scenarios
+                  </span>
+                  <CustomSelect
+                    value={selectedScenario}
+                    onChange={(val) => applyScenario(val)}
+                    options={Object.entries(STRATEGIC_SCENARIOS).map(([key, s]) => ({
+                      value: key,
+                      label: s.label
+                    }))}
+                    placeholder="Select a preset..."
+                  />
+                </div>
+
+                <div className="border-t border-border" />
+
+                <Slider
+                  label="True Solvency (θ)"
+                  value={gameSolvency}
+                  onChange={setGameSolvency}
+                  min={-0.05}
+                  max={0.3}
+                  description="Fundamental asset quality (Morris-Shin fundamental)"
+                />
+                <Slider
+                  label="Number of Agents"
+                  value={gameNBanks}
+                  onChange={(v) => setGameNBanks(Math.round(v))}
+                  min={5}
+                  max={100}
+                  step={1}
+                  description="Total participating banks in the strategic game"
+                />
+                <Slider
+                  label="Time Steps"
+                  value={gameNSteps}
+                  onChange={(v) => setGameNSteps(Math.round(v))}
+                  min={2}
+                  max={20}
+                  step={1}
+                  description="Duration of the strategic rollover game"
+                />
+
+                <div className="border-t border-border pt-3 space-y-3">
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    Market Parameters
+                  </span>
+                  <Slider
+                    label="Interest Rate (r)"
+                    value={gameInterestRate}
+                    onChange={setGameInterestRate}
+                    min={0.01}
+                    max={0.20}
+                    step={0.01}
+                    description="Cost of borrowing for interbank loans"
+                  />
+                  <Slider
+                    label="Recovery Rate (R)"
+                    value={gameRecoveryRate}
+                    onChange={setGameRecoveryRate}
+                    min={0.10}
+                    max={0.80}
+                    step={0.01}
+                    description="Fraction of exposure recovered upon counterparty default"
+                  />
+                  <Slider
+                    label="Exposure / Bank ($B)"
+                    value={gameExposure}
+                    onChange={setGameExposure}
+                    min={0.1}
+                    max={50}
+                    step={0.1}
+                    suffix="B"
+                    description="Size of interbank loans between counterparties"
+                  />
+                </div>
+
+                <div className="border-t border-border pt-3 space-y-3">
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider font-[family-name:var(--font-mono)]">
+                    Agent Behavior
+                  </span>
+                  <Slider
+                    label="Risk Aversion (λ)"
+                    value={gameRiskAversion}
+                    onChange={setGameRiskAversion}
+                    min={0.1}
+                    max={3.0}
+                    step={0.1}
+                    description="Agent sensitivity to variance in expected payoff"
+                  />
+                  <Slider
+                    label="Private Noise (σ)"
+                    value={gameNoiseStd}
+                    onChange={setGameNoiseStd}
+                    min={0.01}
+                    max={0.30}
+                    step={0.01}
+                    description="Uncertainty in private signals about fundamental solvency"
+                  />
+                  <Slider
+                    label="Fire-Sale Haircut"
+                    value={gameHaircut}
+                    onChange={setGameHaircut}
+                    min={0.05}
+                    max={0.50}
+                    step={0.01}
+                    description="Loss on collateral liquidation during distress"
+                  />
+                  <Slider
+                    label="Margin Volatility"
+                    value={gameMarginPressure}
+                    onChange={setGameMarginPressure}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    description="Impact of price variance on margin requirements"
+                  />
+                </div>
+
+                <div className="border-t border-border pt-3">
+                  <Slider
+                    label="Transparency (α)"
+                    value={gameAlpha}
+                    onChange={setGameAlpha}
+                    min={0.1}
+                    max={10.0}
+                    step={0.1}
+                    description="Precision of public signals (Scenario A vs B)"
+                  />
+                  <p className="text-[10px] text-text-muted mt-1">Public signal precision</p>
+                </div>
+
+                <div className="glass rounded-lg p-3 text-[11px] text-text-muted">
+                  <span className="text-data-blue font-bold">Insight:</span>{" "}
+                  Compares OPAQUE vs TRANSPARENT regimes side-by-side.
+                  Transparent regime uses GNN risk-frequency scores as public signal to
+                  prevent coordination failures.
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* EXECUTE */}
+          <button
+            onClick={execute}
+            disabled={simulating}
+            className={cn(
+              "w-full flex items-center justify-center gap-2.5 rounded-xl py-3.5 text-sm font-bold transition-all",
+              simulating
+                ? "bg-white/5 text-text-muted cursor-not-allowed"
+                : "bg-gradient-to-r from-data-blue to-stability-green text-void-void shadow-lg shadow-stability-green/20 hover:shadow-stability-green/40 hover:scale-[1.02] active:scale-[0.98]"
+            )}
+          >
+            {simulating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Running Simulation...
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" />
+                EXECUTE SIMULATION
+              </>
+            )}
+          </button>
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-lg bg-crisis-red/10 border border-crisis-red/20 p-3 text-xs text-crisis-red">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              {error}
+            </div>
+          )}
+        </GlassPanel>
+      </div>
+
+      {/* ── Bottom Metrics Bar ──────────────────────── */}
+      <AnimatePresence>
+        {results && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", damping: 25 }}
+            className="absolute bottom-4 left-88 right-4 z-20"
+          >
+            <GlassPanel className="!p-0 overflow-hidden">
+              {/* Ticker */}
+              {(defaultedBanks.length > 0 || distressedBanks.length > 0) && (
+                <div className="border-b border-border px-4 py-2">
+                  <DefaultTicker defaults={defaultedBanks} distressed={distressedBanks} />
+                </div>
+              )}
+
+              <div className="p-4 flex flex-col lg:flex-row gap-4">
+                {/* Metrics */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+                  <MetricCard
+                    label="Defaults"
+                    value={activeResults?.n_defaults ?? 0}
+                    delta={(activeResults?.n_defaults ?? 0) - (prevResults?.n_defaults ?? activeResults?.n_defaults ?? 0)}
+                    reversed={true}
+                    prefix=""
+                    suffix=""
+                    color="text-crisis-red"
+                  />
+                  <MetricCard
+                    label="Distressed"
+                    value={activeResults?.n_distressed ?? 0}
+                    delta={(activeResults?.n_distressed ?? 0) - (prevResults?.n_distressed ?? activeResults?.n_distressed ?? 0)}
+                    reversed={true}
+                    prefix=""
+                    suffix=""
+                    color="text-amber-warn"
+                  />
+                  <MetricCard
+                    label="Capital Lost"
+                    value={activeResults?.equity_loss ?? 0}
+                    delta={(activeResults?.equity_loss ?? 0) - (prevResults?.equity_loss ?? 0)}
+                    reversed={true}
+                    color="text-crisis-red"
+                  />
+                  <MetricCard
+                    label="Asset Price"
+                    value={
+                      activeResults?.final_asset_price !== undefined
+                        ? (activeResults.final_asset_price * 100 < 0.1 && activeResults.final_asset_price > 0
+                          ? "< 0.1%"
+                          : `${(activeResults.final_asset_price * 100).toFixed(1)}%`)
+                        : "100%"
+                    }
+                    delta={
+                      activeResults?.final_asset_price !== undefined
+                        ? (activeResults.final_asset_price * 100) - ((prevResults?.final_asset_price ?? activeResults.final_asset_price) * 100)
+                        : 0
+                    }
+                    reversed={false}
+                    prefix=""
+                    suffix=""
+                    color={
+                      (activeResults?.final_asset_price ?? 1) < 0.9
+                        ? "text-crisis-red"
+                        : "text-stability-green"
+                    }
+                  />
+
+                  {/* Extra Metrics based on Mode */}
+
+
+                  {tab === "climate" && activeResults?.total_brown_loss !== undefined && (
+                    <div className="col-span-2 flex flex-col justify-center gap-2 p-3 rounded-lg bg-white/[0.03] border border-white/10">
+                      <div className="flex items-center justify-between text-[11px] uppercase tracking-wider font-bold text-text-muted">
+                        <span>Net Transition Impact</span>
+                        <span className={cn(
+                          (activeResults.total_green_gain - activeResults.total_brown_loss) >= 0
+                            ? "text-stability-green"
+                            : "text-amber-500"
+                        )}>
+                          {formatUSD(activeResults.total_green_gain - activeResults.total_brown_loss)}
+                        </span>
+                      </div>
+
+                      <div className="relative h-2 w-full bg-white/10 rounded-full overflow-hidden flex">
+                        <div
+                          className="h-full bg-amber-500 transition-all duration-1000"
+                          style={{ width: `${(activeResults.total_brown_loss / (activeResults.total_brown_loss + activeResults.total_green_gain + 0.01)) * 100}%` }}
+                        />
+                        <div
+                          className="h-full bg-stability-green transition-all duration-1000"
+                          style={{ width: `${(activeResults.total_green_gain / (activeResults.total_brown_loss + activeResults.total_green_gain + 0.01)) * 100}%` }}
+                        />
+                      </div>
+
+                      <div className="flex justify-between text-[10px] font-[family-name:var(--font-mono)]">
+                        <span className="text-amber-500 flex items-center gap-1">
+                          <TrendingDown className="w-3 h-3" />
+                          Brown: {formatUSD(activeResults.total_brown_loss)}
+                        </span>
+                        <span className="text-stability-green flex items-center gap-1">
+                          <Zap className="w-3 h-3" />
+                          Green: {formatUSD(activeResults.total_green_gain)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Circuit Breaker Alert */}
+                {results.circuit_breaker_triggered && (
+                  <div className="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                    <Square className="h-4 w-4 text-amber-400" />
+                    <span className="text-xs font-[family-name:var(--font-mono)] text-amber-400 font-bold uppercase tracking-wider">
+                      Circuit Breaker Triggered
+                    </span>
+                    <span className="text-[10px] text-amber-400/70 font-[family-name:var(--font-mono)]">
+                      — trading halted at step {results.circuit_breaker_step}
+                    </span>
+                  </div>
+                )}
+
+                {/* Timeline chart */}
+                {timelineData.length > 1 && (
+                  <div className="flex-1 min-h-[120px]">
+                    <ResponsiveContainer width="100%" height={120}>
+                      <AreaChart data={timelineData}>
+                        <defs>
+                          <linearGradient
+                            id="lossGrad"
+                            x1="0"
+                            y1="0"
+                            x2="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="0%"
+                              stopColor="#ff2a6d"
+                              stopOpacity={0.3}
+                            />
+                            <stop
+                              offset="100%"
+                              stopColor="#ff2a6d"
+                              stopOpacity={0}
+                            />
+                          </linearGradient>
+                          <linearGradient
+                            id="gridlockGrad"
+                            x1="0"
+                            y1="0"
+                            x2="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="0%"
+                              stopColor="#ffaa00"
+                              stopOpacity={0.25}
+                            />
+                            <stop
+                              offset="100%"
+                              stopColor="#ffaa00"
+                              stopOpacity={0}
+                            />
+                          </linearGradient>
+                        </defs>
+                        <XAxis
+                          dataKey="step"
+                          tick={{ fill: "#555566", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          yAxisId="left"
+                          tick={{ fill: "#555566", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                          width={40}
+                        />
+                        <YAxis
+                          yAxisId="right"
+                          orientation="right"
+                          tick={{ fill: "#555566", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                          width={35}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            background: "rgba(13,13,20,0.95)",
+                            border: "1px solid rgba(255,255,255,0.1)",
+                            borderRadius: 8,
+                            fontSize: 11,
+                            fontFamily: "JetBrains Mono",
+                          }}
+                          labelStyle={{ color: "#888" }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="loss"
+                          stroke="#ff2a6d"
+                          fill="url(#lossGrad)"
+                          strokeWidth={2}
+                          name="Loss ($B)"
+                          yAxisId="left"
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="gridlock"
+                          stroke="#ffaa00"
+                          fill="url(#gridlockGrad)"
+                          strokeWidth={1.5}
+                          name="Failed Payments"
+                          yAxisId="right"
+                        />
+                        {/* Margin Calls area (Orange) */}
+                        {timelineData.some(d => d.margin > 0) && (
+                          <Area
+                            type="monotone"
+                            dataKey="margin"
+                            stroke="#f97316" // Orange-500
+                            fillOpacity={0.1}
+                            fill="#f97316"
+                            strokeWidth={1}
+                            name="Margin ($M)"
+                            yAxisId="right"
+                          />
+                        )}
+                        {/* Strategic Run Rate (Purple) */}
+                        {tab === "strategic" && (
+                          <Area
+                            type="step"
+                            dataKey="runRate"
+                            stroke="#8b5cf6" // Violet-500
+                            fillOpacity={0.1}
+                            fill="#8b5cf6"
+                            strokeWidth={2}
+                            name="Run Fraction (per-step %)"
+                            yAxisId="right"
+                          />
+                        )}
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </div>
+            </GlassPanel>
+          </motion.div>
+        )}
+
+        {/* Game theory results */}
+        {gameData && tab === "strategic" && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="absolute bottom-4 left-88 right-4 z-20"
+          >
+            <GlassPanel className="!p-0 overflow-hidden">
+              {/* Step progress bar during playback */}
+              {gamePlaybackActive && gameStep !== null && (() => {
+                const regime = gameData[gameRegime] ?? gameData.opaque;
+                const tl = regime?.timeline;
+                const totalSteps = tl?.decisions?.length ?? 1;
+                const nWithdrawals = tl?.n_runs?.[gameStep] ?? 0;
+                const stepLoss = tl?.step_fire_sale_loss?.[gameStep] ?? 0;
+                return (
+                  <div className="border-b border-border px-4 py-2 flex items-center gap-4">
+                    <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-neon-purple to-crisis-red transition-all duration-500"
+                        style={{ width: `${((gameStep + 1) / totalSteps) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] font-[family-name:var(--font-mono)] text-text-secondary whitespace-nowrap">
+                      Step {gameStep + 1}/{totalSteps}
+                      <span className="mx-2 text-text-muted">·</span>
+                      <span className="text-crisis-red">{nWithdrawals} withdrew</span>
+                      <span className="mx-2 text-text-muted">·</span>
+                      <span className="text-crisis-red">${(stepLoss / 1e9).toFixed(2)}B loss</span>
+                    </span>
+                  </div>
+                );
+              })()}
+
+              <div className="p-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="text-center">
+                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-crisis-red uppercase tracking-wider mb-1">
+                      Opaque Regime
+                    </p>
+                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-crisis-red" title="Fraction of agents who withdrew at least once during the run">
+                      {((gameData.opaque?.run_rate ?? 0) * 100).toFixed(1)}%
+                    </p>
+                    <p className="text-[10px] text-text-muted mt-1">Cumulative run rate</p>
+                    <p className="text-sm font-[family-name:var(--font-mono)] text-crisis-red mt-1">
+                      {formatUSD(gameData.opaque?.total_fire_sale_loss ?? 0)}
+                    </p>
+                  </div>
+                  <div className="text-center border-x border-border px-4 relative group">
+                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-data-blue uppercase tracking-wider mb-1 flex items-center justify-center gap-1 cursor-help">
+                      Capital Saved
+                      <Info className="w-3 h-3 text-data-blue/50" />
+                    </p>
+                    <p className={cn(
+                      "text-3xl font-bold font-[family-name:var(--font-mono)]",
+                      (gameData.capital_saved ?? 0) >= 0 ? "text-data-blue" : "text-amber-warn"
+                    )}>
+                      {formatUSD(gameData.capital_saved ?? 0)}
+                    </p>
+                    <p className="text-[10px] text-text-muted mt-1">
+                      {(gameData.capital_saved ?? 0) >= 0 ? "Transparency Dividend" : "Transparency Penalty"}
+                    </p>
+
+                    {/* Hover Tooltip */}
+                    <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 mb-2 w-56 p-3 glass-bright rounded-lg text-xs text-left shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-[100] border border-white/10 backdrop-blur-3xl">
+                      {(gameData.capital_saved ?? 0) >= 0 ? (
+                        <>
+                          <span className="text-data-blue font-bold block mb-1">Dividend (+):</span>
+                          AI transparency calmed the market, preventing panic runs on solvent banks.
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-amber-warn font-bold block mb-1">Penalty (-):</span>
+                          Transparency revealed insolvency, accelerating rational defaults (efficient market hypothesis).
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[10px] font-[family-name:var(--font-mono)] text-stability-green uppercase tracking-wider mb-1">
+                      Transparent Regime
+                    </p>
+                    <p className="text-2xl font-bold font-[family-name:var(--font-mono)] text-stability-green" title="Fraction of agents who withdrew at least once during the run">
+                      {((gameData.transparent?.run_rate ?? 0) * 100).toFixed(1)}%
+                    </p>
+                    <p className="text-[10px] text-text-muted mt-1">Cumulative run rate</p>
+                    <p className="text-sm font-[family-name:var(--font-mono)] text-stability-green mt-1">
+                      {formatUSD(gameData.transparent?.total_fire_sale_loss ?? 0)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </GlassPanel>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Top-right info badge + detail button + Inspector */}
+      <div className="absolute top-20 right-4 z-20 flex flex-col gap-2 items-end pointer-events-none">
+        {/* Pointer events needs to be auto for children */}
+        <div className="pointer-events-auto flex flex-col gap-2 items-end">
+          <GlassPanel className="!p-3 flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute h-full w-full rounded-full bg-stability-green opacity-75" />
+                <span className="relative rounded-full h-2 w-2 bg-stability-green" />
+              </span>
+              <span className="text-[10px] font-[family-name:var(--font-mono)] text-text-muted uppercase tracking-wider">
+                {topology
+                  ? `${topology.nodes?.length ?? 0} nodes · ${topology.links?.length ?? 0} edges`
+                  : "Loading..."}
+              </span>
+            </div>
+            <button
+              onClick={() => setLiteMode((v) => !v)}
+              className={cn(
+                "ml-2 px-2.5 py-1 rounded-lg text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all border",
+                liteMode
+                  ? "bg-stability-green/20 text-stability-green border-stability-green/40"
+                  : "bg-white/5 text-text-muted border-border hover:border-text-muted"
+              )}
+            >
+              {liteMode ? "LITE ✓" : "LITE"}
+            </button>
+          </GlassPanel>
+
+          {/* Bank Inspector */}
+          <AnimatePresence>
+            {selectedNode && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="w-72"
+              >
+                <GlassPanel className="p-4 bg-void-panel border-white/10 backdrop-blur-2xl shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-stability-green to-data-blue opacity-50" />
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-white font-[family-name:var(--font-mono)]">
+                        {selectedNode.name?.length > 25 ? selectedNode.name.slice(0, 25) + "..." : selectedNode.name}
+                      </h3>
+                      <span className="text-[10px] uppercase tracking-wider text-text-muted bg-white/5 px-1.5 py-0.5 rounded mt-1 inline-block">
+                        {selectedNode.tier || "Unknown Tier"}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedNode(null)}
+                      className="text-text-muted hover:text-white transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs mb-3">
+                    <div className="p-2 rounded bg-white/[0.03] border border-white/[0.05]">
+                      <span className="block text-[10px] text-text-muted uppercase">Assets</span>
+                      <span className="block font-mono text-white font-bold">{formatUSD(selectedNode.total_assets || 0)}</span>
+                    </div>
+                    <div className="p-2 rounded bg-white/[0.03] border border-white/[0.05]">
+                      <span className="block text-[10px] text-text-muted uppercase">Equity</span>
+                      <span className="block font-mono text-white font-bold">{formatUSD(selectedNode.total_equity || selectedNode.equity || 0)}</span>
+                    </div>
+                  </div>
+
+                  {results?.status && (
+                    <div className="border-t border-white/10 pt-3 flex justify-between items-center">
+                      <span className="text-[10px] text-text-muted uppercase tracking-wider">Simulation Status</span>
+                      <span className={cn(
+                        "text-xs font-bold px-2 py-0.5 rounded border",
+                        (results.status[selectedNode.id] === "Default" || gameStatusMap[selectedNode.id] === "WITHDRAW")
+                          ? "bg-crisis-red/20 text-crisis-red border-crisis-red/30"
+                          : (results.status[selectedNode.id] === "Distressed")
+                            ? "bg-amber-warn/20 text-amber-warn border-amber-warn/30"
+                            : "bg-stability-green/20 text-stability-green border-stability-green/30"
+                      )}>
+                        {gamePlaybackActive
+                          ? (gameStatusMap[selectedNode.id] || "HOLD")
+                          : (results.status[selectedNode.id] || "Healthy")}
+                      </span>
+                    </div>
+                  )}
+                </GlassPanel>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Detailed Analysis Button */}
+          {results && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onClick={() => {
+                setDetailOpen(true);
+                if (graphRef.current) graphRef.current.pauseRendering();
+              }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border border-border-bright
+                hover:border-stability-green/40 hover:shadow-lg hover:shadow-stability-green/10
+                transition-all group cursor-pointer w-full justify-center"
+            >
+              <Info className="h-4 w-4 text-stability-green group-hover:scale-110 transition-transform" />
+              <span className="text-xs font-bold text-white tracking-wide">Analysis</span>
+            </motion.button>
+          )}
+
+          {/* Replay/Stop Contagion Button */}
+          {results && results.status && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onClick={contagionActive ? stopContagion : startContagion}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
+                contagionActive
+                  ? "border-crisis-red/40 shadow-lg shadow-crisis-red/10 bg-crisis-red/10"
+                  : "border-border-bright hover:border-crisis-red/40 hover:shadow-lg hover:shadow-crisis-red/10"
+              )}
+            >
+              {contagionActive ? (
+                <Square className="h-4 w-4 text-crisis-red fill-crisis-red" />
+              ) : (
+                <RotateCcw className="h-4 w-4 text-crisis-red group-hover:scale-110 transition-transform" />
+              )}
+              <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-crisis-red transition-colors">
+                {contagionActive ? "STOP REPLAY" : "REPLAY CONTAGION"}
+              </span>
+            </motion.button>
+          )}
+
+          {/* Game Replay/Stop Button */}
+          {results && results.opaque && tab === "strategic" && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onClick={gamePlaybackActive ? stopGamePlayback : startGamePlayback}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2.5 rounded-xl glass-bright border transition-all group cursor-pointer",
+                gamePlaybackActive
+                  ? "border-neon-purple/40 shadow-lg shadow-neon-purple/10 bg-neon-purple/10"
+                  : "border-border-bright hover:border-neon-purple/40 hover:shadow-lg hover:shadow-neon-purple/10"
+              )}
+            >
+              {gamePlaybackActive ? (
+                <Square className="h-4 w-4 text-neon-purple fill-neon-purple" />
+              ) : (
+                <RotateCcw className="h-4 w-4 text-neon-purple group-hover:scale-110 transition-transform" />
+              )}
+              <span className="text-xs font-[family-name:var(--font-mono)] font-semibold text-text-primary group-hover:text-neon-purple transition-colors">
+                {gamePlaybackActive ? "STOP GAME" : "REPLAY GAME"}
+              </span>
+            </motion.button>
+          )}
+
+          {/* Regime toggle for game playback */}
+          {results && results.opaque && tab === "strategic" && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="flex items-center gap-1 p-1 rounded-lg glass-bright border border-border-bright"
+            >
+              <button
+                onClick={() => setGameRegime("opaque")}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
+                  gameRegime === "opaque"
+                    ? "bg-crisis-red/20 text-crisis-red border border-crisis-red/40"
+                    : "text-text-muted hover:text-text-secondary"
+                )}
+              >
+                OPAQUE
+              </button>
+              <button
+                onClick={() => setGameRegime("transparent")}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-[10px] font-bold font-[family-name:var(--font-mono)] uppercase tracking-wider transition-all",
+                  gameRegime === "transparent"
+                    ? "bg-stability-green/20 text-stability-green border border-stability-green/40"
+                    : "text-text-muted hover:text-text-secondary"
+                )}
+              >
+                TRANSPARENT
+              </button>
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Detailed Analysis Modal ── */}
+      <DetailedAnalysis
+        open={detailOpen}
+        onClose={() => {
+          setDetailOpen(false);
+          if (graphRef.current) graphRef.current.resumeRendering();
+        }}
+        results={results}
+        tab={tab}
+      />
+    </div >
+  );
+}

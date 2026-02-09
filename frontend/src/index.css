@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+/* ── Custom Theme ──────────────────────────────────────────────── */
+@theme {
+  --color-void: #050505;
+  --color-void-light: #0a0a0f;
+  --color-void-panel: #0d0d14;
+  --color-crisis-red: #ff2a6d;
+  --color-stability-green: #05d5fa;
+  --color-data-blue: #32e0c4;
+  --color-amber-warn: #ffaa00;
+  --color-neon-purple: #b24bf3;
+  --color-surface: rgba(255, 255, 255, 0.03);
+  --color-surface-hover: rgba(255, 255, 255, 0.06);
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-bright: rgba(255, 255, 255, 0.12);
+  --color-text-primary: #e8e8e8;
+  --color-text-secondary: #888899;
+  --color-text-muted: #555566;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* ── Base ──────────────────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--color-void);
+  overflow-x: hidden;
+}
+
+/* ── Glass Panel ──────────────────────────────────────────────── */
+.glass {
+  background: rgba(13, 13, 20, 0.85);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-bright {
+  background: rgba(13, 13, 20, 0.95);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ── Typography Adjustments for Contrast ──────────────────────── */
+.text-text-secondary {
+  color: #a0a0b0; /* Lightened from #888899 */
+}
+
+.text-text-muted {
+  color: #707080; /* Lightened from #555566 */
+}
+
+/* ── Neon glow utilities ──────────────────────────────────────── */
+.glow-red {
+  box-shadow: 0 0 20px rgba(255, 42, 109, 0.15),
+    0 0 60px rgba(255, 42, 109, 0.05);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px rgba(5, 213, 250, 0.15),
+    0 0 60px rgba(5, 213, 250, 0.05);
+}
+
+.glow-blue {
+  box-shadow: 0 0 20px rgba(50, 224, 196, 0.15),
+    0 0 60px rgba(50, 224, 196, 0.05);
+}
+
+.glow-red-strong {
+  box-shadow: 0 0 30px rgba(255, 42, 109, 0.3),
+    0 0 80px rgba(255, 42, 109, 0.1);
+}
+
+/* ── Text glow ────────────────────────────────────────────────── */
+.text-glow-red {
+  text-shadow: 0 0 20px rgba(255, 42, 109, 0.5);
+}
+
+.text-glow-green {
+  text-shadow: 0 0 20px rgba(5, 213, 250, 0.5);
+}
+
+.text-glow-blue {
+  text-shadow: 0 0 20px rgba(50, 224, 196, 0.5);
+}
+
+/* ── Animated gradient border ─────────────────────────────────── */
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 42, 109, 0.3),
+    rgba(50, 224, 196, 0.3),
+    rgba(5, 213, 250, 0.3)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* ── Scanline overlay ─────────────────────────────────────────── */
+.scanline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+}
+
+/* ── Pulse animation ──────────────────────────────────────────── */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes ticker-scroll {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-ticker {
+  animation: ticker-scroll 30s linear infinite;
+}
+
+/* ── Grid background pattern ──────────────────────────────────── */
+.grid-bg {
+  background-image: linear-gradient(
+      rgba(255, 255, 255, 0.02) 1px,
+      transparent 1px
+    ),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* ── KaTeX overrides for dark theme ───────────────────────────── */
+.katex {
+  color: #e8e8e8 !important;
+  font-size: 1.1em;
+}

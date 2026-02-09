@@ -1,0 +1,16 @@
+[package]
+name = "encs_rust"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance Eisenberg-Noe Contagion Simulation core with exponential fire sales and intraday time steps"
+
+[lib]
+name = "encs_rust"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+ndarray = "0.16"
+rand = "0.8"
+rand_distr = "0.4"
