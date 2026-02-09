@@ -1,7 +1,5 @@
 """llm_explain.py — Summarization and Groq LLM integration."""
-
 from __future__ import annotations
-
 import json
 import os
 import re
@@ -9,19 +7,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import dotenv
 import httpx
-
 dotenv.load_dotenv()
-
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-
-
 def _downsample(series: list, max_points: int = 60) -> list:
     if not isinstance(series, list) or len(series) <= max_points:
         return series
     step = max(1, len(series) // max_points)
     return [series[i] for i in range(0, len(series), step)]
-
-
 def _series_stats(series: list) -> Dict[str, Any]:
     if not series:
         return {"min": None, "max": None, "last": None, "peak_step": None}
@@ -29,8 +21,6 @@ def _series_stats(series: list) -> Dict[str, Any]:
     max_val = max(series)
     peak_step = int(series.index(max_val)) + 1
     return {"min": float(min_val), "max": float(max_val), "last": float(series[-1]), "peak_step": peak_step}
-
-
 def build_graph_evidence(results: Dict[str, Any]) -> Dict[str, Any]:
     series_map = {
         "price_timeline": results.get("price_timeline") or [],
@@ -45,8 +35,6 @@ def build_graph_evidence(results: Dict[str, Any]) -> Dict[str, Any]:
         "stats": {k: _series_stats(v) for k, v in series_map.items()},
         "lengths": {k: len(v) for k, v in series_map.items()},
     }
-
-
 def build_run_summary(run_type: str, results: Dict[str, Any]) -> Dict[str, Any]:
     if run_type in {"mechanical", "climate"}:
         status = results.get("status") or []
@@ -76,8 +64,6 @@ def build_run_summary(run_type: str, results: Dict[str, Any]) -> Dict[str, Any]:
             "transparent_run_rate": float(transparent.get("run_rate", 0) or 0),
         }
     return {"run_type": run_type}
-
-
 def _extract_bank_impact(results: Dict[str, Any], bank_name: str) -> Optional[Dict[str, Any]]:
     names = results.get("bank_names") or []
     status = results.get("status") or []
@@ -92,8 +78,6 @@ def _extract_bank_impact(results: Dict[str, Any], bank_name: str) -> Optional[Di
                 "equity_loss": float(initial[i]) - float(final[i]) if i < len(initial) and i < len(final) else None,
             }
     return None
-
-
 def build_bank_context(
     bank_profile: Dict[str, Any],
     run_type: Optional[str],
@@ -106,8 +90,6 @@ def build_bank_context(
             context["bank_impact"] = impact
             context["run_type"] = run_type
     return context
-
-
 def build_prompt(
     query: str,
     evidence: Dict[str, Any],
@@ -127,8 +109,6 @@ def build_prompt(
         f"User question: {query}\n\n"
         f"Evidence JSON: {json.dumps(evidence)}"
     )
-
-
 def build_bank_prompt(query: str, evidence: Dict[str, Any]) -> str:
     return (
         "You are an analyst summarizing a single bank using the provided evidence only. "
@@ -145,8 +125,6 @@ def build_bank_prompt(query: str, evidence: Dict[str, Any]) -> str:
         f"User question: {query}\n\n"
         f"Evidence JSON: {json.dumps(evidence)}"
     )
-
-
 def call_groq(prompt: str, model: Optional[str] = None) -> Dict[str, Any]:
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
@@ -174,8 +152,6 @@ def call_groq(prompt: str, model: Optional[str] = None) -> Dict[str, Any]:
         return json.loads(content)
     except json.JSONDecodeError:
         return {"title": "Summary", "summary": content, "key_points": [], "limitations": "", "confidence": 0.4}
-
-
 def load_site_knowledge(path: Optional[str] = None) -> Dict[str, Any]:
     file_path = path or os.environ.get(
         "ENCS_SITE_KNOWLEDGE_PATH",
@@ -187,7 +163,6 @@ def load_site_knowledge(path: Optional[str] = None) -> Dict[str, Any]:
             base = json.load(f)
     except Exception:
         base = {"site": "ENCS Systemic Risk Engine", "pages": []}
-
     frontend_root = os.environ.get(
         "ENCS_FRONTEND_PATH",
         str(Path(__file__).resolve().parents[1] / "frontend" / "src" / "pages"),
@@ -214,11 +189,8 @@ def load_site_knowledge(path: Optional[str] = None) -> Dict[str, Any]:
             })
     except Exception:
         pages = []
-
     base["pages_raw"] = pages
     return base
-
-
 def _extract_text_from_jsx(text: str) -> str:
     text = re.sub(r"^import .*?$", "", text, flags=re.MULTILINE)
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
@@ -226,8 +198,6 @@ def _extract_text_from_jsx(text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
-
-
 def call_groq_chat(messages: list[dict], evidence: Dict[str, Any]) -> str:
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:

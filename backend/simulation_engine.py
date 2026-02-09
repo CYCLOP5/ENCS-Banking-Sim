@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import pandas as pd
 import numpy as np
 from scipy import sparse
@@ -8,24 +7,21 @@ from pathlib import Path
 import argparse
 import warnings
 warnings.filterwarnings('ignore')
-
 from strategic_model import EdgeStrategicAgent
-
 try:
     import encs_rust
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
-
 BASE_PATH = Path(__file__).parent / "data"
 OUTPUT_DIR = BASE_PATH / "output"
 DEFAULT_MAX_ITERATIONS = 100
 DEFAULT_CONVERGENCE_THRESHOLD = 1e-5
 DEFAULT_DISTRESS_THRESHOLD = 0.5
 EU_INTERBANK_RATIO = 0.15
-US_INTERBANK_RATIO = 0.10  # Fixed: was 0.40, real-world is <10% for large banks
+US_INTERBANK_RATIO = 0.10  
 DERIV_MULTIPLIER = 1.5
-DERIVATIVES_NETTING_RATIO = 0.005  # Proxies conversion from Gross Notional to Net Fair Value
+DERIVATIVES_NETTING_RATIO = 0.005  
 def load_and_align_network():
     """
     Load adjacency matrix and node data with proper alignment.
@@ -83,60 +79,44 @@ def apply_central_clearing(W_dense: np.ndarray, df: pd.DataFrame,
     """
     LAYER 5 — CENTRAL CLEARING INFRASTRUCTURE
     Transform bilateral OTC topology into hub-and-spoke CCP topology.
-
     For each edge A->B with weight w:
       - With probability `clearing_rate`: remove A->B, add A->CCP and CCP->B
       - Otherwise: keep A->B as-is (bilateral residual)
-
     The CCP node receives a Default Fund = total_risk × default_fund_ratio.
-
     Returns:
         (W_new, df_new) — expanded matrix (N+1 × N+1) and dataframe with CCP row.
     """
     print("\n" + "=" * 60)
     print("APPLYING CENTRAL CLEARING (CCP TOPOLOGY)")
     print("=" * 60)
-
     n = W_dense.shape[0]
     ccp_idx = n  
-
     W_new = np.zeros((n + 1, n + 1), dtype=np.float64)
-
     rng = np.random.RandomState(seed=123)  
-
     cleared_volume = 0.0
     bilateral_volume = 0.0
     edges_cleared = 0
     edges_bilateral = 0
-
     for i in range(n):
         for j in range(n):
             w = W_dense[i, j]
             if w <= 0 or i == j:
                 continue
             if rng.random() < clearing_rate:
-
                 W_new[i, ccp_idx] += w      
-
                 W_new[ccp_idx, j] += w       
-
                 cleared_volume += w
                 edges_cleared += 1
             else:
                 W_new[i, j] = w
                 bilateral_volume += w
                 edges_bilateral += 1
-
     ccp_liabilities = W_new[ccp_idx, :].sum()  
-
     ccp_assets = W_new[:, ccp_idx].sum()        
-
     ccp_total_risk = max(ccp_liabilities, ccp_assets)
     ccp_equity = ccp_total_risk * default_fund_ratio
     ccp_total_assets = ccp_assets + ccp_equity  
-
     ccp_total_liabilities = ccp_liabilities
-
     ccp_row = {col: 0.0 for col in df.columns}
     ccp_row.update({
         'bank_id': 'CCP_GLOBAL',
@@ -149,19 +129,12 @@ def apply_central_clearing(W_dense: np.ndarray, df: pd.DataFrame,
         'leverage_ratio': 0.0,
     })
     df_new = pd.concat([df, pd.DataFrame([ccp_row])], ignore_index=True)
-
     df_new.loc[ccp_idx, 'interbank_assets'] = ccp_assets
     df_new.loc[ccp_idx, 'interbank_liabilities'] = ccp_liabilities
-
-    # ── Deduct Default Fund contribution from member banks ──────────────
-    # Each of the n original banks pre-funds an equal share.  Without this
-    # the CCP's equity_capital appeared from thin air, violating
-    # conservation of money.
     cost_per_bank = ccp_equity / max(n, 1)
     for i in range(n):
         df_new.loc[i, 'total_assets']    -= cost_per_bank
         df_new.loc[i, 'equity_capital']  -= cost_per_bank
-
     total_volume = cleared_volume + bilateral_volume
     print(f"  Original banks: {n}")
     print(f"  CCP node added at index: {ccp_idx}")
@@ -171,9 +144,7 @@ def apply_central_clearing(W_dense: np.ndarray, df: pd.DataFrame,
     print(f"  CCP Default Fund: ${ccp_equity/1e9:.1f}B ({default_fund_ratio*100:.1f}% of risk)")
     print(f"  Fund cost/bank:   ${cost_per_bank/1e9:.2f}B")
     print(f"  New matrix: {W_new.shape[0]}x{W_new.shape[1]}")
-
     return W_new, df_new
-
 def compute_state_variables(W_dense: np.ndarray, df: pd.DataFrame):
     """
     Compute initial state variables for Eisenberg-Noe clearing.
@@ -197,16 +168,12 @@ def compute_state_variables(W_dense: np.ndarray, df: pd.DataFrame):
     print(f"  Total Initial Equity: ${equity.sum() / 1e12:.2f}T")
     if obligations.sum() < 1e6:
         print("  ⚠ WARNING: Obligations near zero - check matrix scaling!")
-
     if 'deriv_ir_notional' in df.columns:
-        # Load raw Gross Notional, but scale down to Net Fair Value
-        # to prevent unrealistic "Butterfly Effect" margin spirals.
         raw_notional = df['deriv_ir_notional'].fillna(0).values
         derivatives_exposure = raw_notional * DERIVATIVES_NETTING_RATIO
     else:
         derivatives_exposure = np.zeros(n)
     print(f"  Derivatives Exposure (Net): ${derivatives_exposure.sum() / 1e12:.2f}T ({(derivatives_exposure > 0).sum()} banks)")
-
     return {
         'obligations': obligations,
         'external_assets': external_assets.copy(),
@@ -235,18 +202,14 @@ def run_scenario(state: dict, df: pd.DataFrame, trigger_idx: int,
     original_external = external_assets[trigger_idx]
     shock_amount = original_external * loss_severity
     external_assets[trigger_idx] -= shock_amount
-
     trigger_obligation = obligations[trigger_idx]
-
     trigger_name = str(df.iloc[trigger_idx]['bank_name'])[:40] if pd.notna(df.iloc[trigger_idx]['bank_name']) else 'Unknown'
     print(f"  Trigger: {trigger_name}")
     print(f"  Severity: {loss_severity * 100:.0f}%")
     print(f"  Assets Destroyed: ${shock_amount / 1e9:.2f}B")
     print(f"  Obligations Defaulted: ${trigger_obligation * loss_severity / 1e9:.2f}B")
-
     payments = obligations.copy()
     payments[trigger_idx] = obligations[trigger_idx] * (1 - loss_severity)  
-
     pi = np.zeros_like(W)
     for i in range(n):
         if obligations[i] > 0:
@@ -256,10 +219,8 @@ def run_scenario(state: dict, df: pd.DataFrame, trigger_idx: int,
         old_payments = payments.copy()
         inflows = pi.T @ payments
         wealth = external_assets + inflows
-
         new_payments = np.minimum(obligations, np.maximum(0, wealth))
         new_payments[trigger_idx] = obligations[trigger_idx] * (1 - loss_severity)  
-
         payments = new_payments
         diff = np.abs(payments - old_payments).sum()
         if diff < convergence_threshold:
@@ -269,28 +230,19 @@ def run_scenario(state: dict, df: pd.DataFrame, trigger_idx: int,
         print(f"    Max iterations reached ({max_iterations})")
     final_inflows = pi.T @ payments
     final_wealth = external_assets + final_inflows
-
     expected_inflows = pi.T @ obligations  
-
     lost_inflows = expected_inflows - final_inflows  
-
     initial_equity = state['equity'].copy()
     final_equity = initial_equity - lost_inflows
-
     trigger_loss = initial_equity[trigger_idx] * loss_severity
     final_equity[trigger_idx] = initial_equity[trigger_idx] * (1 - loss_severity)
-
     equity_ratio = np.where(initial_equity > 0, final_equity / initial_equity, 1.0)
-
     status = np.array(['Safe'] * n, dtype='<U10')
     status[final_equity < 0] = 'Default'  
-
     status[(equity_ratio < distress_threshold) & (final_equity >= 0)] = 'Distressed'
-
     n_defaults = (status == 'Default').sum()
     n_distressed = (status == 'Distressed').sum()
     total_lost = lost_inflows.sum() + trigger_loss
-
     print(f"\n  === RESULTS ===")
     print(f"  Defaults: {n_defaults}")
     print(f"  Distressed: {n_distressed}")
@@ -322,10 +274,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                       circuit_breaker_threshold: float = 0.0) -> dict:
     """
     LAYER 4 — RUST INTRADAY ENGINE: Exponential fire sales + discrete time steps.
-
     If the Rust extension (encs_rust) is available, delegates the heavy computation
     to compiled Rust code.  Otherwise falls back to an equivalent pure-Python loop.
-
     Parameters:
         n_steps:            Number of discrete intraday time steps.
         uncertainty_sigma:  Gaussian noise on solvency signals.
@@ -335,17 +285,14 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
     print("\n" + "=" * 60)
     print("LAYER 4: INTRADAY SIMULATION" + (" (RUST)" if RUST_AVAILABLE else " (Python fallback)"))
     print("=" * 60)
-
     W = state['W'].copy()
     external_assets = state['external_assets'].copy()
     total_liabilities = df['total_liabilities'].values.copy()
     total_assets = df['total_assets'].values.copy()
     derivatives_exposure = state.get('derivatives_exposure', np.zeros(len(external_assets))).copy()
     n = len(external_assets)
-
     trigger_name = (str(df.iloc[trigger_idx]['bank_name'])[:40]
                     if pd.notna(df.iloc[trigger_idx]['bank_name']) else 'Unknown')
-
     print(f"  Trigger:       {trigger_name}")
     print(f"  Severity:      {loss_severity*100:.0f}%")
     print(f"  Time Steps:    {n_steps}")
@@ -356,7 +303,6 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
     print(f"  Deriv exposure: ${derivatives_exposure.sum() / 1e12:.2f}T")
     if circuit_breaker_threshold > 0:
         print(f"  Circuit breaker: {circuit_breaker_threshold:.0%} drop")
-
     if RUST_AVAILABLE:
         print("  Delegating to Rust core...")
         result_dict = encs_rust.run_full_simulation(
@@ -377,7 +323,6 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             margin_sensitivity=margin_sensitivity,
             circuit_breaker_threshold=circuit_breaker_threshold,
         )
-
         results = {
             'trigger_idx': trigger_idx,
             'trigger_name': trigger_name,
@@ -392,7 +337,6 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             'final_equity': np.array(result_dict['final_equity']),
             'initial_equity': np.array(result_dict['initial_equity']),
             'payments': np.array(result_dict['payments']),
-
             'price_timeline': result_dict['price_timeline'],
             'defaults_timeline': result_dict['defaults_timeline'],
             'distressed_timeline': result_dict['distressed_timeline'],
@@ -403,14 +347,11 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             'circuit_breaker_triggered': result_dict.get('circuit_breaker_triggered', False),
             'circuit_breaker_step': result_dict.get('circuit_breaker_step', None),
         }
-
     else:
         print("  Running pure-Python fallback (build Rust for 10-50× speedup)...")
-
         shock = external_assets[trigger_idx] * loss_severity
         external_assets[trigger_idx] -= shock
         total_assets[trigger_idx] -= shock
-
         asset_price = 1.0
         price_timeline = []
         defaults_timeline = []
@@ -419,21 +360,17 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
         gridlock_timeline = []
         equity_loss_timeline = []
         margin_calls_timeline = []
-        systemic_credit_losses = 0.0   # margin defaults (not fire-sale pressure)
+        systemic_credit_losses = 0.0   
         cb_triggered = False
         cb_step = None
         cb_floor = 1.0 - circuit_breaker_threshold if circuit_breaker_threshold > 0 else 0.0
-
         for t in range(1, n_steps + 1):
-
-            # ── Circuit Breaker: if price has hit the floor, halt all trading ──
             if cb_floor > 0 and asset_price <= cb_floor:
                 if not cb_triggered:
                     cb_triggered = True
                     cb_step = t
                     print(f"  CIRCUIT BREAKER TRIGGERED at step {t}  "
                           f"(price {asset_price:.4f} <= floor {cb_floor:.4f})")
-                # Price is frozen, no new withdrawals or fire sales
                 price_timeline.append(float(asset_price))
                 equity = total_assets - total_liabilities
                 n_def = int(np.sum(equity < 0))
@@ -451,19 +388,15 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                 equity_loss_timeline.append(eq_loss)
                 margin_calls_timeline.append(0.0)
                 continue
-
             solvency = np.where(total_assets > 0,
                                 (total_assets - total_liabilities) / total_assets, 0.0)
             np.random.seed(42 + t)
             noise = np.random.normal(0.0, uncertainty_sigma, size=(n, n))
             signals = solvency[np.newaxis, :] + noise
-
             run_matrix = signals < panic_threshold
             total_withdrawn_per_bank = np.zeros(n)
             total_received_per_bank = np.zeros(n)   
-
             total_withdrawn_global = 0.0
-
             for i in range(n):
                 for j in range(n):
                     if i == j:
@@ -471,12 +404,9 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                     if run_matrix[j, i] and W[i, j] > 0:
                         withdrawn = W[i, j]
                         total_withdrawn_per_bank[i] += withdrawn   
-
                         total_received_per_bank[j] += withdrawn    
-
                         total_withdrawn_global += withdrawn
                         W[i, j] = 0.0
-
             margin_calls_total = 0.0
             if margin_sensitivity > 0.0:
                 price_drop = 1.0 - asset_price
@@ -486,45 +416,31 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                         if margin_call <= 0.0:
                             continue
                         margin_calls_total += margin_call
-                        # Convert dollar margin call -> asset units to sell at current price
                         if asset_price > 1e-9:
                             units_sold = margin_call / asset_price
                         else:
-                            # If price is (near) zero, liquidate everything to raise whatever cash remains
                             units_sold = external_assets[i]
-
                         if external_assets[i] >= units_sold:
                             external_assets[i] -= units_sold
                         else:
-                            # shortfall is measured in DOLLARS: requested margin minus proceeds from selling all remaining units
                             shortfall = margin_call - (external_assets[i] * asset_price)
                             external_assets[i] = 0.0
-                            # Margin default is a credit loss, not a liquidity withdrawal.
                             systemic_credit_losses += shortfall
-
             total_volume_norm = total_withdrawn_global / 1e12
             asset_price *= np.exp(-alpha * total_volume_norm)
-
             for i in range(n):
-
                 external_assets[i] += total_received_per_bank[i]
-
                 if total_withdrawn_per_bank[i] > 0:
                     fire_cost = total_withdrawn_per_bank[i] / asset_price
                     external_assets[i] = max(external_assets[i] - fire_cost, 0.0)
-
                 total_liabilities[i] -= total_withdrawn_per_bank[i]
-
                 total_assets[i] = external_assets[i] * asset_price + W[:, i].sum()
-
             equity = total_assets - total_liabilities
-
             obligations = W.sum(axis=1)
             pi = np.zeros_like(W)
             for i in range(n):
                 if obligations[i] > 0:
                     pi[i, :] = W[i, :] / obligations[i]
-
             payments = obligations.copy()
             for _ in range(max_iterations):
                 old_p = payments.copy()
@@ -533,11 +449,8 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
                 payments = np.minimum(obligations, np.maximum(0, wealth))
                 if np.abs(payments - old_p).sum() < convergence_threshold:
                     break
-
             failed = int(np.sum((obligations > 1e-6) & ((payments / np.maximum(obligations, 1e-12)) < 0.999)))
-
             n_def = int(np.sum(equity < 0))
-            # Compare current equity to pre-shock initial equity for distress
             equity_ratio = np.where(
                 state['equity'] > 0,
                 equity / np.maximum(state['equity'], 1e-12),
@@ -545,7 +458,6 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             )
             n_dis = int(np.sum((equity_ratio < distress_threshold) & (equity >= 0)))
             eq_loss = float(np.sum(np.abs(equity[equity < 0])))
-
             price_timeline.append(float(asset_price))
             defaults_timeline.append(n_def)
             distressed_timeline.append(n_dis)
@@ -553,18 +465,15 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             gridlock_timeline.append(failed)
             equity_loss_timeline.append(eq_loss)
             margin_calls_timeline.append(float(margin_calls_total))
-
         initial_equity = state['equity'].copy()
         final_equity = total_assets - total_liabilities
         equity_ratio_final = np.where(initial_equity > 0, final_equity / initial_equity, 1.0)
         status = np.array(['Safe'] * n, dtype='<U10')
         status[final_equity < 0] = 'Default'
         status[(equity_ratio_final < distress_threshold) & (final_equity >= 0)] = 'Distressed'
-
         n_defaults = int((status == 'Default').sum())
         n_distressed = int((status == 'Distressed').sum())
         total_lost = float(np.sum(np.maximum(initial_equity - final_equity, 0)))
-
         results = {
             'trigger_idx': trigger_idx,
             'trigger_name': trigger_name,
@@ -590,7 +499,6 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
             'circuit_breaker_triggered': cb_triggered,
             'circuit_breaker_step': cb_step,
         }
-
     print(f"\n  === RESULTS ===")
     print(f"  Engine:       {'Rust' if results.get('rust_engine') else 'Python'}")
     print(f"  Time Steps:   {results['n_steps']}")
@@ -602,14 +510,7 @@ def run_rust_intraday(state: dict, df: pd.DataFrame, trigger_idx: int,
         print(f"  Margin Defaults: ${results['systemic_credit_losses'] / 1e9:.1f}B (credit loss, not fire-sale)")
     if results.get('circuit_breaker_triggered'):
         print(f"  Circuit breaker halted trading at step {results['circuit_breaker_step']}")
-
     return results
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  STRATEGIC INTRADAY ENGINE  — replaces static panic_threshold with
-#  per-edge Bayesian agents (Morris & Shin 1998 global-games framework).
-# ═══════════════════════════════════════════════════════════════════════════
-
 def run_strategic_intraday_simulation(
     state: dict,
     df: pd.DataFrame,
@@ -623,45 +524,37 @@ def run_strategic_intraday_simulation(
     distress_threshold: float = DEFAULT_DISTRESS_THRESHOLD,
     margin_sensitivity: float = 0.2,
     circuit_breaker_threshold: float = 0.0,
-    # Strategic-model knobs  (sensible defaults match strategic_model.py)
     interest_rate: float = 0.05,
     recovery_rate: float = 0.40,
     risk_aversion_mean: float = 1.0,
     risk_aversion_std: float = 0.3,
     info_regime: str = "OPAQUE",
-    public_precision: float = None,  # Explicit α override
+    public_precision: float = None,  
     seed: int = 42,
 ) -> dict:
     """
     LAYER 4b — STRATEGIC INTRADAY SIMULATION
     =========================================
     Drop-in replacement for the Python fallback in ``run_rust_intraday``.
-
     **Key difference:** instead of ``signals < panic_threshold`` (a static,
     global scalar), every directed edge A→B is governed by an
     :class:`EdgeStrategicAgent` that:
-
       1. Observes a **noisy private signal** of Bank B's *specific* solvency.
       2. Observes a **public signal** (quality depends on ``info_regime``).
       3. Forms a Bayesian posterior  P(B defaults).
       4. Computes expected utility  U_stay  vs  U_withdraw.
       5. Decides per-edge whether to pull funding  W[A, B].
-
     This closes the logical gap: withdrawal decisions are now *endogenous*
     and heterogeneous — Bank A might trust B but panic about C.
-
     Everything else (fire sales, margin calls, Eisenberg-Noe clearing,
     circuit breaker, return schema) is identical to the existing engine
     so the API remains a drop-in.
-
     Parameters match ``run_rust_intraday`` plus the strategic knobs.
     """
     print("\n" + "=" * 60)
     print("LAYER 4b: STRATEGIC INTRADAY SIMULATION")
     print("=" * 60)
-
     rng = np.random.RandomState(seed)
-
     W = state['W'].copy()
     external_assets = state['external_assets'].copy()
     total_liabilities = df['total_liabilities'].values.copy()
@@ -670,39 +563,24 @@ def run_strategic_intraday_simulation(
         'derivatives_exposure', np.zeros(len(external_assets))
     ).copy()
     n = len(external_assets)
-
     trigger_name = (
         str(df.iloc[trigger_idx]['bank_name'])[:40]
         if pd.notna(df.iloc[trigger_idx]['bank_name'])
         else 'Unknown'
     )
-
-
-    # ── Signal precision (regime-dependent) ──────────────────────────────
-    private_precision = 1.0 / (uncertainty_sigma ** 2)        # β
-    
+    private_precision = 1.0 / (uncertainty_sigma ** 2)        
     if public_precision is not None:
-        pass  # Use provided value
+        pass  
     elif info_regime == "TRANSPARENT":
-        public_precision = 100.0                               # α
+        public_precision = 100.0                               
     else:  # OPAQUE
-        public_precision = 0.01                                # α ≈ 0
-
-    # ── Vectorized Setup ─────────────────────────────────────────────────
-    # Identify all potentially active edges (non-zero weights)
-    # We use arrays instead of a dict of objects for massive performance gain
+        public_precision = 0.01                                
     rows, cols = W.nonzero()
-    # Filter out self-loops and zero weights (though nonzero() handles weights > 0 if W is positive)
-    # Only strictly positive weights matter
     valid_mask = (rows != cols) & (W[rows, cols] > 0)
     rows = rows[valid_mask]
     cols = cols[valid_mask]
     n_edges = len(rows)
-
-    # Pre-generate risk aversion for each edge
-    # This replaces the loop that created EdgeStrategicAgent objects
     edge_risk_aversions = np.maximum(0.1, rng.normal(risk_aversion_mean, risk_aversion_std, n_edges))
-
     print(f"  Trigger:           {trigger_name}")
     print(f"  Severity:          {loss_severity*100:.0f}%")
     print(f"  Time Steps:        {n_steps}")
@@ -715,15 +593,10 @@ def run_strategic_intraday_simulation(
     print(f"  Risk aversion μ:   {risk_aversion_mean}")
     if circuit_breaker_threshold > 0:
         print(f"  Circuit breaker:   {circuit_breaker_threshold:.0%} drop")
-
-    # ── Apply initial shock ──────────────────────────────────────────────
     shock = external_assets[trigger_idx] * loss_severity
     external_assets[trigger_idx] -= shock
     total_assets[trigger_idx] -= shock
-
     asset_price = 1.0
-
-    # ── Timeline accumulators (same schema as run_rust_intraday) ─────────
     price_timeline       = []
     defaults_timeline    = []
     distressed_timeline  = []
@@ -731,32 +604,24 @@ def run_strategic_intraday_simulation(
     gridlock_timeline    = []
     equity_loss_timeline = []
     margin_calls_timeline = []
-    
-    # New metrics requested
     avg_belief_timeline = []
     run_fraction_timeline = []
     n_runs_timeline = []
     cumulative_fire_sale_loss_timeline = []
     step_fire_sale_loss_timeline = []
-    decisions_timeline = []  # Added for frontend visualization
+    decisions_timeline = []  
     current_cumulative_fire_sale_loss = 0.0
-
-    systemic_credit_losses = 0.0   # margin defaults (not fire-sale pressure)
+    systemic_credit_losses = 0.0   
     cb_triggered = False
     cb_step      = None
     cb_floor     = 1.0 - circuit_breaker_threshold if circuit_breaker_threshold > 0 else 0.0
-
-    # ── Main intraday loop ───────────────────────────────────────────────
     for t in range(1, n_steps + 1):
-
-        # ── Circuit breaker ──────────────────────────────────────────────
         if cb_floor > 0 and asset_price <= cb_floor:
             if not cb_triggered:
                 cb_triggered = True
                 cb_step = t
                 print(f"  CIRCUIT BREAKER at step {t}  "
                       f"(price {asset_price:.4f} <= floor {cb_floor:.4f})")
-            # Frozen step — record and continue
             price_timeline.append(float(asset_price))
             equity = total_assets - total_liabilities
             n_def = int(np.sum(equity < 0))
@@ -772,7 +637,6 @@ def run_strategic_intraday_simulation(
             gridlock_timeline.append(0)
             equity_loss_timeline.append(eq_loss)
             margin_calls_timeline.append(0.0)
-            # Append 0/current for new metrics when frozen
             avg_belief_timeline.append(0.0)
             run_fraction_timeline.append(0.0)
             n_runs_timeline.append(0)
@@ -780,125 +644,72 @@ def run_strategic_intraday_simulation(
             step_fire_sale_loss_timeline.append(0.0)
             decisions_timeline.append(["ROLL_OVER"] * n)
             continue
-
-        # ── Per-borrower solvency (public observable) ────────────────────
         solvency = np.where(
             total_assets > 0,
             (total_assets - total_liabilities) / total_assets,
             0.0,
         )
-
-        # Public signal per borrower (regime-dependent quality)
         if info_regime == "TRANSPARENT":
-            # Near-perfect public signal per node
             public_signals = solvency + rng.normal(0, 0.01, size=n)
         else:
-            # Uninformative — falls back on private info
             public_signals = np.zeros(n)
-
-        # ── Cumulative loss feedback (degrades effective solvency) ───────
         cum_loss_frac = float(np.sum(np.maximum(state['equity'] - (total_assets - total_liabilities), 0))
                               / max(np.sum(state['equity']), 1.0))
         margin_pressure = margin_sensitivity * 0.0 if asset_price >= 1.0 else \
             margin_sensitivity * (1.0 - asset_price) * 0.10
-
-        # ── Vectorized Edge Decisions ─────────────────────────────────────
         total_withdrawn_per_bank = np.zeros(n)
         total_received_per_bank  = np.zeros(n)
         total_withdrawn_global   = 0.0
-
-        # Step metrics init
         step_avg_belief = 0.0
         step_run_fraction = 0.0
         step_n_runs = 0
         step_decisions = ["ROLL_OVER"] * n
-
-        # 1. Identify currently active edges from our pool
-        #    (We use the original indices 'rows', 'cols', but check current W)
-        #    Extract current exposures using fancy indexing
         current_exposures = W[rows, cols]
-        
-        # 2. Filter for edges that still have money (exposure > 0)
         active_indices = current_exposures > 1e-9
-        
         if np.any(active_indices):
-            # Subset arrays to just the active edges
             act_rows = rows[active_indices]
             act_cols = cols[active_indices]
             act_exposures = current_exposures[active_indices]
             act_risk_aversions = edge_risk_aversions[active_indices]
             n_active = len(act_rows)
-
-            # 3. Vectorized Signal Generation
-            #    Private signal: lender i's noisy observation of borrower j
             effective_solvency_j = solvency[act_cols] * (1.0 - 0.5 * cum_loss_frac)
             private_signals = effective_solvency_j + rng.normal(0, uncertainty_sigma, size=n_active)
-            
-            #    Public signals for these borrowers
             act_public_signals = public_signals[act_cols]
-
-            # 4. Bayesian Posterior P(j defaults)
             posterior_mean = (
                 public_precision * act_public_signals + 
                 private_precision * private_signals
             ) / (public_precision + private_precision)
-            
             posterior_std = 1.0 / np.sqrt(public_precision + private_precision)
             theta_star = 0.0
             p_defaults = norm.cdf((theta_star - posterior_mean) / posterior_std)
-
-            # 5. Expected-utility decision
-            #    Lender's current vs initial equity (for dynamic risk aversion)
             lender_cur_eq = total_assets[act_rows] - total_liabilities[act_rows]
             lender_init_eq = state['equity'][act_rows]
-            
-            #    Dynamic lambda: λ * (1 + 2 * loss_ratio)
-            #    Avoid divide by zero
             equity_loss_ratios = np.zeros_like(lender_cur_eq)
             valid_init = lender_init_eq > 0
             equity_loss_ratios[valid_init] = 1.0 - (lender_cur_eq[valid_init] / lender_init_eq[valid_init])
             equity_loss_ratios = np.clip(equity_loss_ratios, 0.0, 1.0)
-            
             effective_lambdas = act_risk_aversions * (1.0 + 2.0 * equity_loss_ratios)
-
-            #    U_stay
             e_return_stay = (1.0 - p_defaults) * (1.0 + interest_rate) + p_defaults * recovery_rate
             spread = (1.0 + interest_rate) - recovery_rate
             variance_stay = p_defaults * (1.0 - p_defaults) * (spread ** 2)
             risk_stay = np.sqrt(variance_stay)
             U_stay = e_return_stay - effective_lambdas * risk_stay
-
-            #    U_run
             U_run = 1.0 + margin_pressure
-
-            # 6. Execute Withdrawals
             withdraw_mask = U_run > U_stay
-
             step_avg_belief = float(np.mean(p_defaults))
             step_n_runs = int(np.sum(withdraw_mask))
             step_run_fraction = float(step_n_runs / n_active) if n_active > 0 else 0.0
-            
             if np.any(withdraw_mask):
                 w_rows = act_rows[withdraw_mask]
                 w_cols = act_cols[withdraw_mask]
                 w_amounts = act_exposures[withdraw_mask]
-                
-                # Record decisions (per-agent)
-                # If a bank withdraws on ANY link, we mark them as withdrawing in the visualization
                 unique_withdrawers = np.unique(w_rows)
                 for w_idx in unique_withdrawers:
                     step_decisions[w_idx] = "WITHDRAW"
-
-                # 
-                # Update W (set to 0)
                 W[w_rows, w_cols] = 0.0
-
-                # Accumulate flows
                 np.add.at(total_withdrawn_per_bank, w_cols, w_amounts)
                 np.add.at(total_received_per_bank, w_rows, w_amounts)
                 total_withdrawn_global = np.sum(w_amounts)
-
-        # ── Margin calls on derivatives (unchanged from original) ────────
         margin_calls_total = 0.0
         if margin_sensitivity > 0.0:
             price_drop = 1.0 - asset_price
@@ -908,31 +719,22 @@ def run_strategic_intraday_simulation(
                     if margin_call <= 0.0:
                         continue
                     margin_calls_total += margin_call
-                    # Convert dollar margin call -> units at current market price
                     if asset_price > 1e-9:
                         units_sold = margin_call / asset_price
                     else:
                         units_sold = external_assets[i]
-
                     if external_assets[i] >= units_sold:
                         external_assets[i] -= units_sold
                     else:
                         shortfall = margin_call - (external_assets[i] * asset_price)
                         external_assets[i] = 0.0
-                        # Margin default is a credit loss, not a liquidity withdrawal — same fix as Python fallback.
                         systemic_credit_losses += shortfall
-
-        # ── Fire-sale price impact ───────────────────────────────────────
         total_volume_norm = total_withdrawn_global / 1e12
-        
         step_fire_loss = 0.0
         asset_price *= np.exp(-alpha * total_volume_norm)
-
         if asset_price > 1e-9:
              step_fire_loss = (total_withdrawn_global / asset_price) - total_withdrawn_global
              current_cumulative_fire_sale_loss += step_fire_loss
-
-        # ── Balance-sheet update (identical to original engine) ──────────
         for i in range(n):
             external_assets[i] += total_received_per_bank[i]
             if total_withdrawn_per_bank[i] > 0:
@@ -940,15 +742,12 @@ def run_strategic_intraday_simulation(
                 external_assets[i] = max(external_assets[i] - fire_cost, 0.0)
             total_liabilities[i] -= total_withdrawn_per_bank[i]
             total_assets[i] = external_assets[i] * asset_price + W[:, i].sum()
-
-        # ── Eisenberg-Noe clearing (unchanged) ───────────────────────────
         equity = total_assets - total_liabilities
         obligations = W.sum(axis=1)
         pi = np.zeros_like(W)
         for i in range(n):
             if obligations[i] > 0:
                 pi[i, :] = W[i, :] / obligations[i]
-
         payments = obligations.copy()
         for _ in range(max_iterations):
             old_p = payments.copy()
@@ -957,12 +756,10 @@ def run_strategic_intraday_simulation(
             payments = np.minimum(obligations, np.maximum(0, wealth))
             if np.abs(payments - old_p).sum() < convergence_threshold:
                 break
-
         failed = int(np.sum(
             (obligations > 1e-6)
             & ((payments / np.maximum(obligations, 1e-12)) < 0.999)
         ))
-
         n_def = int(np.sum(equity < 0))
         eq_ratio = np.where(
             state['equity'] > 0,
@@ -970,8 +767,6 @@ def run_strategic_intraday_simulation(
         )
         n_dis = int(np.sum((eq_ratio < distress_threshold) & (equity >= 0)))
         eq_loss = float(np.sum(np.abs(equity[equity < 0])))
-
-        # ── Record step ──────────────────────────────────────────────────
         price_timeline.append(float(asset_price))
         defaults_timeline.append(n_def)
         distressed_timeline.append(n_dis)
@@ -980,14 +775,11 @@ def run_strategic_intraday_simulation(
         equity_loss_timeline.append(eq_loss)
         decisions_timeline.append(step_decisions)
         margin_calls_timeline.append(float(margin_calls_total))
-        
         avg_belief_timeline.append(step_avg_belief)
         run_fraction_timeline.append(step_run_fraction)
         n_runs_timeline.append(step_n_runs)
         step_fire_sale_loss_timeline.append(step_fire_loss)
         cumulative_fire_sale_loss_timeline.append(current_cumulative_fire_sale_loss)
-
-    # ── Final status classification ──────────────────────────────────────
     initial_equity = state['equity'].copy()
     final_equity   = total_assets - total_liabilities
     eq_ratio_final = np.where(
@@ -996,14 +788,9 @@ def run_strategic_intraday_simulation(
     status = np.array(['Safe'] * n, dtype='<U10')
     status[final_equity < 0] = 'Default'
     status[(eq_ratio_final < distress_threshold) & (final_equity >= 0)] = 'Distressed'
-
     n_defaults   = int((status == 'Default').sum())
     n_distressed = int((status == 'Distressed').sum())
     total_lost   = float(np.sum(np.maximum(initial_equity - final_equity, 0)))
-
-    # Compute scalars
-    # FIX: Use cumulative run rate (Total unique withdrawals / Total agents)
-    # Count agents that *ever* chose "WITHDRAW" across the decisions timeline
     if decisions_timeline:
         n_agents = len(decisions_timeline[0]) if len(decisions_timeline[0]) > 0 else 0
         ever_withdrawn = set()
@@ -1014,12 +801,8 @@ def run_strategic_intraday_simulation(
         final_run_rate = (len(ever_withdrawn) / n_agents) if n_agents > 0 else 0.0
     else:
         final_run_rate = 0.0
-
     final_fire_sale_loss = cumulative_fire_sale_loss_timeline[-1] if cumulative_fire_sale_loss_timeline else 0.0
-
-# Compute timeline steps array for convenience
     steps_arr = list(range(1, n_steps + 1))
-
     results = {
         'trigger_idx':       trigger_idx,
         'trigger_name':      trigger_name,
@@ -1039,7 +822,6 @@ def run_strategic_intraday_simulation(
         'final_equity':      final_equity,
         'initial_equity':    initial_equity,
         'payments':          payments,
-        # Flat fields for general compatibility
         'price_timeline':        price_timeline,
         'defaults_timeline':     defaults_timeline,
         'distressed_timeline':   distressed_timeline,
@@ -1054,7 +836,6 @@ def run_strategic_intraday_simulation(
         'systemic_credit_losses': systemic_credit_losses,
         'circuit_breaker_triggered': cb_triggered,
         'circuit_breaker_step':     cb_step,
-        # Nested timeline object for frontend Strategic Visualization
         'timeline': {
             'steps': steps_arr,
             'decisions': decisions_timeline,
@@ -1073,7 +854,6 @@ def run_strategic_intraday_simulation(
         },
         'agent_names': df['bank_name'].tolist(),
     }
-
     print(f"\n  === RESULTS ===")
     print(f"  Engine:       Strategic Bayesian (Morris & Shin)")
     print(f"  Info regime:  {info_regime}")
@@ -1087,10 +867,7 @@ def run_strategic_intraday_simulation(
         print(f"  Margin Defaults: ${systemic_credit_losses / 1e9:.1f}B (credit loss, not fire-sale)")
     if cb_triggered:
         print(f"   Circuit breaker halted trading at step {cb_step}")
-
     return results
-
-
 def find_most_dangerous(W_dense: np.ndarray, df: pd.DataFrame) -> int:
     """Find most dangerous node by out-strength (total obligations)."""
     print("\n" + "=" * 60)

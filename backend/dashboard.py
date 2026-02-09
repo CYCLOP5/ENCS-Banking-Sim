@@ -8,14 +8,12 @@ import simulation_engine as sim
 from pathlib import Path
 from strategic_model import run_game_simulation
 from climate_risk import assign_climate_exposure, run_transition_shock
-
 try:
     import torch
     from ml_pipeline import load_trained_model, predict_risk
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
-
 GNN_MODEL_PATH = Path(__file__).parent / "gnn_model.pth"
 st.set_page_config(
     page_title="ENCS Systemic Risk Engine",
@@ -27,7 +25,6 @@ st.markdown("""
     .stApp { background-color: #0e1117; }
     .metric-card {
         background: linear-gradient(135deg, 
-
         border: 1px solid 
         border-radius: 10px;
         padding: 20px;
@@ -86,13 +83,11 @@ def create_3d_network(df, status_array=None, layout_df=None, coords=None):
             x_nodes.append(x)
             y_nodes.append(y)
             z_nodes.append(z)
-
             is_ccp = (row.get('region') == 'Global')
             if status_array is not None and idx < len(status_array):
                 status = status_array[idx]
                 if is_ccp:
                     colors.append('#FFD700')  
-
                 elif status == 'Default':
                     colors.append('#ff4444')
                 elif status == 'Distressed':
@@ -165,7 +160,6 @@ def main():
     st.markdown("### Eisenberg-Noe Contagion Simulation Dashboard")
     with st.spinner("Loading network data..."):
         W_dense_base, df_base = load_network_data()
-
     st.sidebar.markdown("---")
     st.sidebar.markdown("## \U0001f3e6 Market Structure")
     clearing_model = st.sidebar.radio(
@@ -193,9 +187,7 @@ def main():
         )
     else:
         W_dense, df = W_dense_base, df_base
-
     initial_state = sim.compute_state_variables(W_dense, df)
-
     if 'network_coords' not in st.session_state or st.session_state.get('_ccp_mode') != clearing_model:
         coords, layout_df = generate_network_layout(df)
         st.session_state.network_coords = coords
@@ -224,14 +216,12 @@ def main():
         max_iter = st.number_input("Max Iterations", value=100, min_value=10, max_value=500)
         tolerance = st.number_input("Convergence Tolerance", value=1e-5, format="%.0e")
         distress_thresh = st.slider("Distress Threshold", 0.0, 1.0, 0.95)
-
     st.sidebar.markdown("---")
     st.sidebar.markdown("##  Rust Intraday Engine")
     rust_badge = "\u26a1 Rust" if sim.RUST_AVAILABLE else "\U0001f40d Python fallback"
     st.sidebar.caption(f"Backend: {rust_badge}")
     intraday_mode = st.sidebar.checkbox("Enable Intraday Mode", value=False,
                                          help="Simulate discrete time steps with exponential fire sales")
-
     if intraday_mode:
         n_steps = st.sidebar.slider("Time Steps", min_value=1, max_value=50, value=10,
                                      help="Number of discrete intraday steps")
@@ -256,10 +246,8 @@ def main():
         intra_panic = 0.10
         intra_alpha = 0.005
         intra_margin = 1.0
-
     st.sidebar.markdown("---")
     run_button = st.sidebar.button("\U0001f680 RUN SIMULATION", use_container_width=True, type="primary")
-
     st.sidebar.markdown("---")
     st.sidebar.markdown("## \U0001f916 AI Risk Predictor")
     if not ML_AVAILABLE:
@@ -399,14 +387,11 @@ def main():
                 **Defaults - US:** {defaults_us}  
                 **Defaults - EU:** {defaults_eu}  
                 """)
-
     if results and results.get('price_timeline'):
         st.markdown("---")
         st.markdown("### \u23f1 Intraday Contagion Timeline")
         tl_cols = st.columns(4)
-
         steps = list(range(1, len(results['price_timeline']) + 1))
-
         with tl_cols[0]:
             fig_price = go.Figure()
             fig_price.add_trace(go.Scatter(
@@ -423,7 +408,6 @@ def main():
                 yaxis=dict(range=[0, 1.05])
             )
             st.plotly_chart(fig_price, use_container_width=True)
-
         with tl_cols[1]:
             fig_def = go.Figure()
             fig_def.add_trace(go.Bar(
@@ -442,7 +426,6 @@ def main():
                 height=280, margin=dict(l=40, r=10, t=40, b=30)
             )
             st.plotly_chart(fig_def, use_container_width=True)
-
         with tl_cols[2]:
             fig_grid = go.Figure()
             fig_grid.add_trace(go.Scatter(
@@ -457,7 +440,6 @@ def main():
                 height=280, margin=dict(l=40, r=10, t=40, b=30)
             )
             st.plotly_chart(fig_grid, use_container_width=True)
-
         with tl_cols[3]:
             margin_tl = results.get('margin_calls_timeline', [0] * len(steps))
             fig_margin = go.Figure()
@@ -474,43 +456,33 @@ def main():
                 height=280, margin=dict(l=40, r=10, t=40, b=30)
             )
             st.plotly_chart(fig_margin, use_container_width=True)
-
     ai_pred = st.session_state.get('ai_predictions')
     if ai_pred is not None:
         st.markdown("---")
         st.markdown("### \U0001f916 AI Risk Prediction (GNN)")
-
         ai_col1, ai_col2 = st.columns([2, 1])
-
         with ai_col1:
-
             risk_probs = ai_pred['risk_probs']
             layout_df = st.session_state.layout_df
             coords = st.session_state.network_coords
-
             x_nodes, y_nodes, z_nodes = [], [], []
             colors_ai, sizes_ai, hover_ai = [], [], []
-
             for idx, row in layout_df.iterrows():
                 if idx in coords:
                     x, y, z = coords[idx]
                     x_nodes.append(x)
                     y_nodes.append(y)
                     z_nodes.append(z)
-
                     p = risk_probs[idx] if idx < len(risk_probs) else 0.0
                     colors_ai.append(p)
-
                     size = np.log10(max(row['total_assets'], 1e6)) * 2
                     sizes_ai.append(size)
-
                     hover_ai.append(
                         f"<b>{row['bank_name'][:40]}</b><br>"
                         f"P(Risk): {p:.2%}<br>"
                         f"Region: {row['region']}<br>"
                         f"Assets: ${row['total_assets']/1e9:.1f}B"
                     )
-
             fig_ai = go.Figure()
             fig_ai.add_trace(go.Scatter3d(
                 x=x_nodes, y=y_nodes, z=z_nodes,
@@ -543,7 +515,6 @@ def main():
             )
             st.plotly_chart(fig_ai, use_container_width=True)
             st.markdown("\U0001f7e2 **Low Risk** → \U0001f7e0 **Medium** → \U0001f534 **High Risk** (continuous scale)")
-
         with ai_col2:
             st.markdown("#### Top 15 Riskiest Banks")
             top_n = 15
@@ -554,7 +525,6 @@ def main():
                 'P(Risk)': [f"{risk_probs[i]:.1%}" for i in sorted_idx],
             })
             st.dataframe(risk_df, use_container_width=True, hide_index=True)
-
             if results is not None:
                 st.markdown("#### AI vs Simulation")
                 sim_risky = np.isin(results['status'], ['Default', 'Distressed']).astype(int)
@@ -562,7 +532,6 @@ def main():
                 min_len = min(len(sim_risky), len(ai_risky))
                 sim_risky = sim_risky[:min_len]
                 ai_risky = ai_risky[:min_len]
-
                 tp = int(((ai_risky == 1) & (sim_risky == 1)).sum())
                 tn = int(((ai_risky == 0) & (sim_risky == 0)).sum())
                 fp = int(((ai_risky == 1) & (sim_risky == 0)).sum())
@@ -570,12 +539,10 @@ def main():
                 accuracy = (tp + tn) / max(tp + tn + fp + fn, 1)
                 precision = tp / max(tp + fp, 1)
                 recall = tp / max(tp + fn, 1)
-
                 st.metric("Accuracy", f"{accuracy:.1%}")
                 cm_col1, cm_col2 = st.columns(2)
                 cm_col1.metric("Precision", f"{precision:.1%}")
                 cm_col2.metric("Recall", f"{recall:.1%}")
-
                 fig_cm = go.Figure(data=go.Heatmap(
                     z=[[tn, fp], [fn, tp]],
                     x=['Pred Safe', 'Pred Risky'],
@@ -594,19 +561,13 @@ def main():
                 st.plotly_chart(fig_cm, use_container_width=True)
             else:
                 st.info("Run a simulation to compare AI vs actual results")
-
-    # ==================================================================
-    #  🌍  CLIMATE STRESS TEST  —  Green Swan Transition Risk
-    # ==================================================================
     st.sidebar.markdown("---")
     st.sidebar.markdown("## 🌍 Climate Stress Test")
     st.sidebar.caption("Green Swan scenario — sudden carbon tax strands brown assets")
-
     climate_enabled = st.sidebar.checkbox(
         "Enable Green Swan Scenario", value=False, key="climate_on",
         help="Apply a carbon-tax transition shock based on portfolio composition"
     )
-
     if climate_enabled:
         climate_tax = st.sidebar.slider(
             "Carbon Tax Severity", min_value=0, max_value=100, value=50,
@@ -622,11 +583,9 @@ def main():
             "Use Intraday Engine", value=True, key="climate_intra",
             help="Propagate via intraday fire-sale engine (unchecked = Eisenberg-Noe)"
         )
-
         run_climate_btn = st.sidebar.button(
             "🌍 RUN CLIMATE SHOCK", use_container_width=True, key="run_climate"
         )
-
         if run_climate_btn:
             with st.spinner("Running Green Swan scenario…"):
                 df_climate = assign_climate_exposure(df.copy())
@@ -648,14 +607,9 @@ def main():
                 st.session_state.climate_results = climate_results
                 st.session_state.df_climate = df_climate
             st.sidebar.success("Climate shock complete — scroll down for results ↓")
-
-    # ==================================================================
-    #  ♟️  STRATEGIC SIMULATION  —  Morris & Shin (1998) Global Games
-    # ==================================================================
     st.sidebar.markdown("---")
     st.sidebar.markdown("## ♟️ Strategic Simulation")
     st.sidebar.caption("Morris & Shin (1998) Global Games — coordination failure model")
-
     with st.sidebar.expander("Game Parameters", expanded=False):
         game_n_banks = st.number_input("Number of agents", value=20, min_value=5, max_value=100, key="game_n_banks")
         game_n_steps = st.number_input("Time steps", value=5, min_value=2, max_value=20, key="game_n_steps")
@@ -667,9 +621,7 @@ def main():
         game_haircut = st.slider("Fire-sale haircut", 0.05, 0.50, 0.20, 0.05, key="game_hc")
         game_margin = st.slider("Margin volatility", 0.0, 1.0, 0.3, 0.1, key="game_mv")
         game_exposure = st.number_input("Exposure / bank ($B)", value=1.0, min_value=0.1, max_value=50.0, step=0.5, key="game_exp")
-
     run_game_btn = st.sidebar.button("♟️ RUN GAME A/B TEST", use_container_width=True)
-
     if run_game_btn:
         with st.spinner("Running Global Games A/B test…"):
             common = dict(
@@ -690,7 +642,6 @@ def main():
             st.session_state.game_opaque = res_opaque
             st.session_state.game_transparent = res_transparent
         st.sidebar.success("Game A/B test complete — scroll down for results ↓")
-
     if st.session_state.get('game_opaque') and st.session_state.get('game_transparent'):
         res_a = st.session_state.game_opaque
         res_b = st.session_state.game_transparent
@@ -699,7 +650,6 @@ def main():
         loss_a = res_a['total_fire_sale_loss']
         loss_b = res_b['total_fire_sale_loss']
         capital_saved = loss_a - loss_b
-
         st.markdown("---")
         st.markdown("### ♟️ Strategic Simulation — Global Games A/B Test")
         st.markdown(
@@ -707,7 +657,6 @@ def main():
             "(panics), not just insolvency.  "
             "The AI transparency signal anchors expectations and prevents self-fulfilling runs._"
         )
-
         gcol1, gcol2, gcol3 = st.columns(3)
         with gcol1:
             st.metric("🔴 Loss — Opaque (Fog of War)", f"${loss_a / 1e9:,.2f}B")
@@ -722,7 +671,6 @@ def main():
                 f"${capital_saved / 1e9:,.2f}B</span></div>",
                 unsafe_allow_html=True,
             )
-
         fig_game = go.Figure()
         fig_game.add_trace(go.Scatter(
             x=tl_a['steps'],
@@ -748,7 +696,6 @@ def main():
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         )
         st.plotly_chart(fig_game, use_container_width=True)
-
         gc1, gc2 = st.columns(2)
         with gc1:
             fig_belief = go.Figure()
@@ -770,7 +717,6 @@ def main():
                 yaxis=dict(range=[0, 1]),
             )
             st.plotly_chart(fig_belief, use_container_width=True)
-
         with gc2:
             fig_run = go.Figure()
             fig_run.add_trace(go.Bar(
@@ -790,7 +736,6 @@ def main():
                 yaxis=dict(range=[0, 105]),
             )
             st.plotly_chart(fig_run, use_container_width=True)
-
         with st.expander("Step-by-step detail", expanded=False):
             detail_a = pd.DataFrame({
                 'Step': tl_a['steps'],
@@ -804,14 +749,9 @@ def main():
                 'Loss B ($B)': [f"{x/1e9:.2f}" for x in tl_b['cumulative_fire_sale_loss']],
             })
             st.dataframe(detail_a, use_container_width=True, hide_index=True)
-
-    # ==================================================================
-    #  🌍  CLIMATE RESULTS PANEL
-    # ==================================================================
     if st.session_state.get('climate_results'):
         cr = st.session_state.climate_results
         df_c = st.session_state.df_climate
-
         st.markdown("---")
         st.markdown("### 🌍 Green Swan — Climate Transition Risk")
         st.markdown(
@@ -820,8 +760,6 @@ def main():
             "transmit losses to EU banks via interbank leverage — proving "
             "climate risk is **systemic**._"
         )
-
-        # ── Big metrics ──
         cc1, cc2, cc3, cc4 = st.columns(4)
         with cc1:
             st.metric(
@@ -843,15 +781,12 @@ def main():
                 "🏦 Bank Failures",
                 cr['n_defaults'],
             )
-
         st.write(
             "**Observe:** high-carbon US banks fail first, transmitting the shock "
             "to low-carbon EU banks through interbank leverage. Even 'green' banks "
             "are dragged into distress — climate risk is a *network* phenomenon."
         )
-
-        # ── Regional breakdown ──
-        status_arr = np.array(cr['status'])  # Must be ndarray for element-wise ==
+        status_arr = np.array(cr['status'])  
         regions_arr = df_c['region'].values
         breakdown = []
         for rgn in ['US', 'EU']:
@@ -868,10 +803,7 @@ def main():
             pd.DataFrame(breakdown),
             use_container_width=True, hide_index=True,
         )
-
-        # ── Top climate casualties ──
         clim_col1, clim_col2 = st.columns(2)
-
         with clim_col1:
             top_n = 15
             net_shock = cr['climate_net_shock']
@@ -885,9 +817,7 @@ def main():
             })
             st.markdown("#### Top 15 Climate Casualties")
             st.dataframe(casualty, use_container_width=True, hide_index=True)
-
         with clim_col2:
-            # Carbon score vs status scatter
             fig_cs = go.Figure()
             color_map = {'Default': '#ff4444', 'Distressed': '#ffaa00', 'Safe': '#00ff88'}
             for status_val, color in color_map.items():
@@ -915,8 +845,6 @@ def main():
                 legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
             )
             st.plotly_chart(fig_cs, use_container_width=True)
-
-        # ── Intraday timeline if available ──
         if cr.get('price_timeline'):
             steps = list(range(1, len(cr['price_timeline']) + 1))
             tc1, tc2 = st.columns(2)
@@ -953,7 +881,6 @@ def main():
                     height=280, margin=dict(l=40, r=10, t=40, b=30),
                 )
                 st.plotly_chart(fig_cd, use_container_width=True)
-
     st.markdown("---")
     st.caption("ENCS Systemic Risk Engine | Hybrid Rust/Python Architecture | Eisenberg-Noe + Intraday Fire Sales + GNN Risk Predictor + Global Games + Green Swan")
 if __name__ == "__main__":

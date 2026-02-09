@@ -1,28 +1,19 @@
 """
 run_game_analysis.py — A/B Test: Opaque vs Transparent Information Regimes
 ==========================================================================
-
 Scenario A  ("Fog of War")      OPAQUE mode  — no reliable public signal.
                                 Agents panic, coordination fails, fire-sale cascade.
-
 Scenario B  ("AI Transparency") TRANSPARENT mode — accurate GNN/AI signal.
                                 Agents coordinate on fundamentals, runs are averted.
-
 Win Metric:  Total Capital Saved = Loss(A) − Loss(B)
 """
-
 from __future__ import annotations
-
 import numpy as np
 from strategic_model import run_game_simulation
-
 def _bar(label: str, value: float, max_val: float, width: int = 40) -> str:
-    """Simple ASCII bar for terminal output."""
     filled = int(width * min(value / max(max_val, 1e-12), 1.0))
     return f"  {label}  [{'█' * filled}{'░' * (width - filled)}]  ${value / 1e9:,.2f}B"
-
 def _print_scenario(tag: str, result: dict) -> None:
-    """Pretty-print a single scenario result."""
     tl = result['timeline']
     print(f"\n{'─' * 64}")
     print(f"  SCENARIO {tag}  │  Regime: {result['info_regime']}")
@@ -49,7 +40,6 @@ def _print_scenario(tag: str, result: dict) -> None:
     print(f"\n  Total runs:      {result['total_runs']} / {result['total_decisions']}  "
           f"({result['run_rate']:.1%})")
     print(f"  Fire-sale loss:  ${result['total_fire_sale_loss'] / 1e9:,.2f}B")
-
 def run_ab_test(
     n_banks: int = 20,
     n_steps: int = 5,
@@ -68,7 +58,6 @@ def run_ab_test(
     """
     Run both OPAQUE and TRANSPARENT scenarios with identical parameters
     and compare fire-sale losses.
-
     Returns
     -------
     (result_opaque, result_transparent, capital_saved)
@@ -87,23 +76,17 @@ def run_ab_test(
         margin_volatility=margin_volatility,
         seed=seed,
     )
-
     result_opaque = run_game_simulation(info_regime="OPAQUE", **common)
-
     result_transparent = run_game_simulation(info_regime="TRANSPARENT", **common)
-
     loss_a = result_opaque['total_fire_sale_loss']
     loss_b = result_transparent['total_fire_sale_loss']
     capital_saved = loss_a - loss_b
-
     if verbose:
         print("\n" + "═" * 64)
         print("  GLOBAL GAMES A/B TEST  —  Morris & Shin (1998)")
         print("═" * 64)
-
         _print_scenario("A  (Fog of War — OPAQUE)", result_opaque)
         _print_scenario("B  (AI Transparency — TRANSPARENT)", result_transparent)
-
         max_loss = max(loss_a, loss_b, 1.0)
         print("\n" + "═" * 64)
         print("  COMPARISON")
@@ -114,11 +97,9 @@ def run_ab_test(
         print(f"  Run-rate  A: {result_opaque['run_rate']:5.1%}   "
               f"B: {result_transparent['run_rate']:5.1%}")
         print()
-
         print("═" * 64)
         print(f"  ★  TOTAL CAPITAL SAVED  =  ${capital_saved / 1e9:,.2f} BILLION  ★")
         print("═" * 64)
-
         if capital_saved > 0:
             print("\n  ✓  AI transparency averted the coordination-failure cascade.")
             print("     The accurate public signal anchored expectations,")
@@ -127,9 +108,7 @@ def run_ab_test(
             print("\n  ⚠  No difference — both regimes produced identical outcomes.")
         else:
             print("\n  ✗  Transparent regime performed worse (unexpected).")
-
     return result_opaque, result_transparent, capital_saved
-
 def sensitivity_sweep(
     solvency_values: list | None = None,
     verbose: bool = True,
@@ -140,7 +119,6 @@ def sensitivity_sweep(
     """
     if solvency_values is None:
         solvency_values = [-0.05, 0.00, 0.05, 0.10, 0.15, 0.20, 0.30]
-
     rows = []
     for theta in solvency_values:
         res_a, res_b, saved = run_ab_test(
@@ -154,7 +132,6 @@ def sensitivity_sweep(
             'run_rate_opaque': res_a['run_rate'],
             'run_rate_transparent': res_b['run_rate'],
         })
-
     if verbose:
         print("\n" + "═" * 72)
         print("  SENSITIVITY SWEEP  —  Capital Saved vs True Solvency (θ)")
@@ -173,17 +150,12 @@ def sensitivity_sweep(
                 f"{r['run_rate_transparent']:5.1%}"
             )
         print()
-
     return rows
-
 if __name__ == "__main__":
     print("\n" + "█" * 64)
     print("  ENCS — Strategic Interactions Module")
     print("  Morris & Shin (1998) Global Games A/B Test")
     print("█" * 64)
-
     run_ab_test()
-
     print("\n")
     sensitivity_sweep()
-

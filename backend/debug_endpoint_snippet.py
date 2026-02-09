@@ -1,6 +1,5 @@
 @app.get("/api/debug/ml")
 async def debug_ml():
-    """Debug endpoint to check ML availability and model status."""
     model = _get_cached_model()
     norm_path = Path(__file__).parent / "norm_stats.pt"
     return {

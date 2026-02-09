@@ -11,7 +11,6 @@ EBA_DIR = BASE_PATH / "EBAdata"
 EU_METADATA = EBA_DIR / "TR_Metadata.xlsx"
 BIS_LBS = BASE_PATH / "BIS" / "WS_LBS_D_PUB_csv_flat.csv"
 def load_ffiec_schedule(schedule_name: str, date: str = FFIEC_DATE) -> pd.DataFrame:
-    """Load a single FFIEC schedule"""
     pattern = f"FFIEC CDR Call Schedule {schedule_name} {date}*.txt"
     files = sorted(glob.glob(str(FFIEC_DIR / pattern)))
     if not files:
@@ -34,7 +33,6 @@ def safe_numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors='coerce').fillna(0)
 def get_col(df: pd.DataFrame, *col_names) -> pd.Series:
     """Extract a numeric column, coalescing multiple candidates per-row.
-    
     For FFIEC data, banks file either RCFD (consolidated: domestic + foreign)
     or RCON (domestic only).  When multiple column names are given, we take
     the first non-null/non-zero value per row so every bank gets its best
@@ -45,15 +43,12 @@ def get_col(df: pd.DataFrame, *col_names) -> pd.Series:
         return pd.Series(0, index=df.index)
     if len(found) == 1:
         return safe_numeric(df[found[0]])
-    # Coalesce: take the first non-zero value across candidate columns
     result = safe_numeric(df[found[0]]).copy()
     for col in found[1:]:
         vals = safe_numeric(df[col])
-        # Fill in where current result is zero/missing
         mask = (result == 0) & (vals != 0)
         result[mask] = vals[mask]
     return result
-
 def load_eu_metadata() -> dict:
     """
     Load EU bank metadata from TR_Metadata.xlsx.
@@ -62,16 +57,13 @@ def load_eu_metadata() -> dict:
     if not EU_METADATA.exists():
         print(f"    Warning: EU metadata file not found: {EU_METADATA}")
         return {}
-    
     df = pd.read_excel(EU_METADATA, header=None, skiprows=4)
     lei_col = df.iloc[:, 2].astype(str).str.strip()
     name_col = df.iloc[:, 3].astype(str).str.strip()
-    
     mapping = {}
     for lei, name in zip(lei_col, name_col):
         if lei and name and lei != 'nan' and name != 'nan' and len(lei) > 5:
             mapping[lei] = name
-    
     print(f"    Loaded {len(mapping)} EU bank names from metadata")
     return mapping
 def ingest_ffiec() -> pd.DataFrame:
@@ -205,13 +197,10 @@ def ingest_eba() -> pd.DataFrame:
     print(f"    Loaded {len(df_cre)} rows, {df_cre['LEI_Code'].nunique()} banks")
     banks = df_cre[['LEI_Code', 'NSA']].drop_duplicates()
     df_eu = banks.rename(columns={'LEI_Code': 'bank_id'})
-    
     eu_names = load_eu_metadata()
     df_eu['bank_name'] = df_eu['bank_id'].map(eu_names)
     no_name = df_eu['bank_name'].isna()
     df_eu.loc[no_name, 'bank_name'] = df_eu.loc[no_name, 'bank_id'] + '_' + df_eu.loc[no_name, 'NSA']
-    # FIX: EBA data contains multiple periods (202409..202506).
-    # Only use the latest period to avoid ~4x asset inflation.
     latest_cre_period = df_cre['Period'].max()
     print(f"    Using latest period: {latest_cre_period}")
     df_cre_latest = df_cre[df_cre['Period'] == latest_cre_period]
@@ -233,7 +222,6 @@ def ingest_eba() -> pd.DataFrame:
     if sov_path.exists():
         df_sov = pd.read_csv(sov_path, dtype=str, low_memory=False)
         print(f"    Loaded {len(df_sov)} rows")
-        # FIX: Use latest period only to avoid multi-period double-counting
         latest_sov_period = df_sov['Period'].max()
         print(f"    Using latest period: {latest_sov_period}")
         df_sov_latest = df_sov[df_sov['Period'] == latest_sov_period]
@@ -249,7 +237,6 @@ def ingest_eba() -> pd.DataFrame:
     if mrk_path.exists():
         df_mrk = pd.read_csv(mrk_path, dtype=str, low_memory=False)
         print(f"    Loaded {len(df_mrk)} rows")
-        # FIX: Use latest period only to avoid multi-period double-counting
         latest_mrk_period = df_mrk['Period'].max()
         print(f"    Using latest period: {latest_mrk_period}")
         df_mrk_latest = df_mrk[df_mrk['Period'] == latest_mrk_period]
@@ -260,23 +247,14 @@ def ingest_eba() -> pd.DataFrame:
         mrk_agg['market_risk_rwa'] = mrk_agg['market_risk_rwa'] * 1e6
         df_eu = df_eu.merge(mrk_agg, on='bank_id', how='left')
         print(f"    Market risk RWA: {df_eu['market_risk_rwa'].sum() / 1e12:.2f}T EUR")
-
-    # ── Reconstruct EU balance sheets ──
-    # Total Assets = Credit Exposure + Sovereign Exposure (non-overlapping in EBA)
     df_eu['total_assets'] = (
         df_eu['total_exposure_cre'].fillna(0)
         + df_eu['sovereign_exposure'].fillna(0)
     )
-
-    # Equity = RWA × average CET1 ratio (14.5%, EBA Risk Dashboard avg for EU banks)
-    # This gives bank-specific leverage instead of flat 20× for everyone.
-    # Clamp to [3%, 15%] of total assets (Basel III leverage ratio floor / sanity cap).
     AVG_CET1_RATIO = 0.145
     df_eu['equity_capital'] = df_eu['rwa_credit'].fillna(0) * AVG_CET1_RATIO
-    # Fall back to 5% of assets for banks with zero RWA (shouldn't happen, but safe)
     no_rwa = df_eu['equity_capital'] <= 0
     df_eu.loc[no_rwa, 'equity_capital'] = df_eu.loc[no_rwa, 'total_assets'] * 0.05
-    # Enforce leverage ratio floor (3%) and sanity cap (15%)
     df_eu['equity_capital'] = df_eu['equity_capital'].clip(
         lower=df_eu['total_assets'] * 0.03,
         upper=df_eu['total_assets'] * 0.15,

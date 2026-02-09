@@ -1,12 +1,4 @@
-"""
-api.py — FastAPI REST wrapper for the ENCS Systemic Risk Engine
-================================================================
-Exposes the simulation, game-theory, and climate modules over HTTP
-so the React frontend can consume them.
-"""
-
 from __future__ import annotations
-
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException
@@ -19,16 +11,11 @@ import logging
 import ctypes as _ctypes
 import uuid
 from dotenv import load_dotenv
-
 import simulation_engine as sim
 from strategic_model import run_game_simulation
 from climate_risk import assign_climate_exposure, run_transition_shock
-
 from pathlib import Path
-
-# Load environment variables from .env (if present)
 load_dotenv()
-
 from llm_store import LlmStore
 from llm_explain import (
     build_run_summary,
@@ -40,14 +27,7 @@ from llm_explain import (
     load_site_knowledge,
     call_groq_chat,
 )
-
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Workaround: some PyTorch builds require Intel ITT JIT profiling symbols
-# (e.g., iJIT_NotifyEvent) at dynamic link time. If a stub shared library
-# exists, preload it with RTLD_GLOBAL *before* importing torch.
-# ---------------------------------------------------------------------------
 def _preload_itt_stub() -> str | None:
     candidates = [
         os.environ.get("ENCS_ITT_STUB_PATH"),
@@ -62,12 +42,9 @@ def _preload_itt_stub() -> str | None:
             except Exception:
                 continue
     return None
-
-
 ML_AVAILABLE = False
 ML_ERROR: str | None = None
 _ITT_STUB_USED = None
-
 try:
     _ITT_STUB_USED = _preload_itt_stub()
     import torch
@@ -76,17 +53,12 @@ try:
 except Exception as exc:
     ML_AVAILABLE = False
     ML_ERROR = f"{type(exc).__name__}: {exc}"
-
 GNN_MODEL_PATH = Path(__file__).parent / "gnn_model.pth"
-
-# ── App ────────────────────────────────────────────────────────────────────
-
 app = FastAPI(
     title="ENCS Systemic Risk Engine API",
     version="1.0.0",
     description="REST API for the Eisenberg-Noe Contagion Simulation engine.",
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -94,13 +66,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Cached network data ───────────────────────────────────────────────────
-
 _cache: Dict[str, Any] = {}
 _llm_store = LlmStore()
-
-
 def _get_cached_model():
     if "gnn_model" in _cache:
         return _cache["gnn_model"]
@@ -117,8 +84,6 @@ def _get_cached_model():
         _cache["gnn_model_error"] = f"{type(exc).__name__}: {exc}"
         logger.exception("Failed to load GNN model")
         return None
-
-
 def _load_network():
     """Load network once and cache."""
     if "W_dense" not in _cache:
@@ -128,31 +93,18 @@ def _load_network():
         _cache["W_dense"] = W_dense
         _cache["df"] = df
     return _cache["W_dense"], _cache["df"]
-
-
 def _generate_max_entropy_topology(df: pd.DataFrame, target_total_weight: float) -> np.ndarray:
     """Generates a Max Entropy (Uniform) topology with the same total volume."""
     n = len(df)
-    # Uniform weight for every off-diagonal entry
-    # Total edges = n * (n - 1)
     if n <= 1:
         return np.zeros((n, n))
-    
     num_edges = n * (n - 1)
-    # If target_total_weight is 0, we just return zeros.
     if target_total_weight <= 0:
         return np.zeros((n, n))
-        
     avg_weight = target_total_weight / num_edges
-    
     W_uniform = np.full((n, n), avg_weight)
     np.fill_diagonal(W_uniform, 0.0)
-    
     return W_uniform
-
-
-# ── Request / Response schemas ────────────────────────────────────────────
-
 class SimulationRequest(BaseModel):
     topology_type: str = Field("smart", pattern="^(smart|uniform)$")
     trigger_idx: int = 0
@@ -160,33 +112,27 @@ class SimulationRequest(BaseModel):
     max_iter: int = Field(100, ge=10, le=500)
     tolerance: float = 1e-5
     distress_threshold: float = Field(0.95, ge=0, le=1)
-    # intraday
     use_intraday: bool = True
     n_steps: int = Field(10, ge=1, le=50)
     sigma: float = Field(0.05, ge=0.01, le=0.30)
     panic_rate: float = Field(0.10, ge=0, le=0.50)
     fire_sale_alpha: float = Field(0.005, ge=0, le=0.05)
     margin_multiplier: float = Field(1.0, ge=0, le=5)
-    # Strategic engine (Morris & Shin)
     use_strategic: bool = False
     strategic_interest_rate: float = Field(0.05, ge=0.01, le=0.20)
     strategic_recovery_rate: float = Field(0.40, ge=0.10, le=0.80)
     strategic_risk_aversion: float = Field(1.0, ge=0.1, le=10.0)
-    strategic_info_regime: str = Field("OPAQUE")  # "OPAQUE" or "TRANSPARENT"
-    strategic_alpha: float = Field(5.0, ge=0.01, le=100.0)  # Public signal precision
+    strategic_info_regime: str = Field("OPAQUE")  
+    strategic_alpha: float = Field(5.0, ge=0.01, le=100.0)  
     strategic_noise_std: float = Field(0.05, ge=0.01, le=2.0)
     strategic_haircut: float = Field(0.20, ge=0.01, le=1.0)
     strategic_margin_pressure: float = Field(0.5, ge=0.0, le=5.0)
-    strategic_exposure_scale: float = Field(1.0, ge=0.1, le=100.0) # Target exposure in $B
-    # Circuit breaker
+    strategic_exposure_scale: float = Field(1.0, ge=0.1, le=100.0) 
     circuit_breaker_enabled: bool = False
     circuit_breaker_threshold: float = Field(0.15, ge=0.01, le=0.50)
-    # CCP
     use_ccp: bool = False
     clearing_rate: float = Field(0.5, ge=0, le=1)
     default_fund_ratio: float = Field(0.05, ge=0.01, le=0.25)
-
-
 class ClimateRequest(BaseModel):
     carbon_tax: float = Field(0.5, ge=0, le=1)
     green_subsidy: float = Field(0.10, ge=0, le=1.0)
@@ -196,8 +142,6 @@ class ClimateRequest(BaseModel):
     n_steps: int = Field(10, ge=1, le=50)
     circuit_breaker_enabled: bool = False
     circuit_breaker_threshold: float = Field(0.15, ge=0.01, le=0.50)
-
-
 class GameRequest(BaseModel):
     n_banks: int = Field(20, ge=5, le=100)
     n_steps: int = Field(5, ge=2, le=20)
@@ -209,52 +153,37 @@ class GameRequest(BaseModel):
     haircut: float = Field(0.20, ge=0.05, le=0.50)
     margin_pressure: float = Field(0.30, ge=0, le=1)
     exposure: float = Field(1e9, ge=1e8, le=5e10)
-
-
 class ExplainRunRequest(BaseModel):
     run_id: Optional[str] = None
     run_type: Optional[str] = None
     question: Optional[str] = "Summarize the simulation results in simple terms."
-
-
 class ExplainBankRequest(BaseModel):
     bank_id: str
     run_id: Optional[str] = None
     question: Optional[str] = "Explain this bank's risk profile in simple terms."
-
-
 class ChatRequest(BaseModel):
     messages: List[Dict[str, str]]
     run_id: Optional[str] = None
     run_type: Optional[str] = None
     bank_id: Optional[str] = None
     bank_name: Optional[str] = None
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────
-
 def _ndarray_to_list(v):
     if isinstance(v, np.ndarray):
         return v.tolist()
     return v
-
-
 def _clean_results(d: dict) -> dict:
     """Convert numpy arrays and other non-serializable types to JSON-safe."""
     import math
-
     def _sanitize_float(v):
         """Replace NaN/Inf with None (JSON null)."""
         if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
             return None
         return v
-
     def _sanitize_list(lst):
         return [
             _sanitize_float(x) if isinstance(x, (int, float)) else x
             for x in lst
         ]
-
     out = {}
     for k, v in d.items():
         if isinstance(v, np.ndarray):
@@ -283,13 +212,10 @@ def _clean_results(d: dict) -> dict:
                     cleaned_list.append(item)
             out[k] = cleaned_list
         elif k == "agents":
-            # Skip non-serialisable agent objects
             continue
         else:
             out[k] = v
     return out
-
-
 def _build_bank_snapshot(df: pd.DataFrame) -> list[dict]:
     snapshot = []
     for i, row in df.iterrows():
@@ -304,8 +230,6 @@ def _build_bank_snapshot(df: pd.DataFrame) -> list[dict]:
             "equity": float(row.get("equity_capital", 0) or 0),
         })
     return snapshot
-
-
 def _extract_top_losses(results: dict, top_n: int = 5) -> list[dict]:
     names = results.get("bank_names") or []
     initial = results.get("initial_equity") or []
@@ -317,15 +241,11 @@ def _extract_top_losses(results: dict, top_n: int = 5) -> list[dict]:
             rows.append({"name": str(name), "equity_loss": float(loss)})
     rows.sort(key=lambda r: r["equity_loss"], reverse=True)
     return rows[:top_n]
-
-
 def _percentile_rank(values: list[float], value: float) -> float:
     if not values:
         return 0.0
     below = sum(1 for v in values if v <= value)
     return round(100.0 * below / len(values), 2)
-
-
 def _bank_peer_summary(all_banks: list[dict], bank: dict) -> dict:
     region = bank.get("region")
     tier = bank.get("tier")
@@ -335,8 +255,6 @@ def _bank_peer_summary(all_banks: list[dict], bank: dict) -> dict:
         "region": region,
         "tier": tier,
     }
-
-
 def _build_chat_evidence(req: ChatRequest) -> Dict[str, Any]:
     site_knowledge = load_site_knowledge()
     stored = (
@@ -349,13 +267,11 @@ def _build_chat_evidence(req: ChatRequest) -> Dict[str, Any]:
     if stored:
         run_summary = stored.summary_json or build_run_summary(stored.run_type, stored.result_json)
         graph_evidence = build_graph_evidence(stored.result_json)
-
     bank_profile = None
     if req.bank_id:
         bank_profile = _llm_store.get_bank_profile(req.bank_id)
     elif req.bank_name:
         bank_profile = _llm_store.find_bank_profile_by_name(req.bank_name)
-
     bank_context = None
     if bank_profile:
         bank_context = build_bank_context(
@@ -363,7 +279,6 @@ def _build_chat_evidence(req: ChatRequest) -> Dict[str, Any]:
             stored.run_type if stored else None,
             stored.result_json if stored else None,
         )
-
     bank_count = _llm_store.get_bank_profile_count()
     include_all = os.environ.get("ENCS_CHAT_INCLUDE_ALL_BANKS", "0") == "1"
     top_banks = _llm_store.get_top_bank_profiles(limit=8)
@@ -383,7 +298,6 @@ def _build_chat_evidence(req: ChatRequest) -> Dict[str, Any]:
             }
             for b in _llm_store.get_all_bank_profiles()
         ]
-
     return {
         "site": site_knowledge,
         "latest_run": {
@@ -397,10 +311,6 @@ def _build_chat_evidence(req: ChatRequest) -> Dict[str, Any]:
         "bank_profiles_count": bank_count,
         "bank_profiles_all": all_banks,
     }
-
-
-# ── Routes ────────────────────────────────────────────────────────────────
-
 @app.get("/api/health")
 async def health():
     model_error = _cache.get("gnn_model_error")
@@ -412,8 +322,6 @@ async def health():
         "model_path": str(GNN_MODEL_PATH),
         "model_exists": GNN_MODEL_PATH.exists(),
     }
-
-
 @app.get("/api/topology")
 async def get_topology():
     """
@@ -423,8 +331,6 @@ async def get_topology():
     try:
         W_dense, df = _load_network()
         n = W_dense.shape[0]
-
-        # Build nodes
         nodes = []
         for i, row in df.iterrows():
             nodes.append({
@@ -437,33 +343,24 @@ async def get_topology():
                 "equity": float(row.get("equity_capital", 0)),
                 "leverage_ratio": float(row.get("leverage_ratio", 0)),
             })
-
-        # Build links — keep top edges by weight, but guarantee every node
-        # has at least one connection so the graph looks connected.
         rows_idx, cols_idx = np.nonzero(W_dense)
         weights = W_dense[rows_idx, cols_idx]
-
         MAX_EDGES = 3000
         if len(weights) > MAX_EDGES:
             threshold = np.percentile(weights, 100 * (1 - MAX_EDGES / len(weights)))
             mask = weights >= threshold
         else:
             mask = np.ones(len(weights), dtype=bool)
-
-        # Ensure every node has at least its strongest outgoing edge
         connected = set(rows_idx[mask]) | set(cols_idx[mask])
         for node_id in range(n):
             if node_id not in connected:
-                # Find strongest edge for this node (outgoing or incoming)
                 out_mask = rows_idx == node_id
                 in_mask = cols_idx == node_id
                 node_mask = out_mask | in_mask
                 if node_mask.any():
                     best = np.argmax(weights * node_mask)
                     mask[best] = True
-
         rows_idx, cols_idx, weights = rows_idx[mask], cols_idx[mask], weights[mask]
-
         links = []
         for s, t, w in zip(rows_idx, cols_idx, weights):
             links.append({
@@ -471,28 +368,20 @@ async def get_topology():
                 "target": int(t),
                 "value": float(w),
             })
-
         return {"nodes": nodes, "links": links, "n_banks": len(df)}
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/banks")
 async def get_banks():
     """Return full bank table for the Bank Explorer page."""
     try:
         W_dense, df = _load_network()
-
-        # Enrich with climate data
         if "climate_df_enriched" not in _cache:
             df_enr = df.copy()
             assign_climate_exposure(df_enr)
             _cache["climate_df_enriched"] = df_enr
-        
         df_enriched = _cache["climate_df_enriched"].copy()
-
-        # GNN risk scores
         risk_scores = np.zeros(len(df_enriched))
         if ML_AVAILABLE:
             model = _get_cached_model()
@@ -502,7 +391,6 @@ async def get_banks():
                     risk_scores = result["risk_scores"]
                 except Exception:
                     logger.exception("Risk prediction failed")
-
         banks = []
         for i, row in df_enriched.iterrows():
             banks.append({
@@ -520,7 +408,6 @@ async def get_banks():
                 "green_assets": float(row.get("green_assets", 0)),
                 "gnn_risk_score": float(risk_scores[i]) if i < len(risk_scores) else 0.0,
             })
-
         if os.environ.get("ENCS_LLM_STORE_BANKS", "0") == "1":
             try:
                 _llm_store.upsert_bank_profiles(banks)
@@ -530,59 +417,35 @@ async def get_banks():
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/simulate")
 async def run_simulation(req: SimulationRequest):
     """Run the Eisenberg-Noe / Intraday simulation."""
     try:
         W_dense, df = _load_network()
-
-        # Strategic Exposure Scaling
         if req.use_strategic and req.strategic_exposure_scale != 1.0:
-            # req.strategic_exposure_scale is a dollar amount in Billions.
-            # We want the AVERAGE interbank exposure to equal this request.
-            # Current Average:
-            current_avg_exposure = W_dense.sum(axis=1).mean() # Average liability per bank
+            current_avg_exposure = W_dense.sum(axis=1).mean() 
             if current_avg_exposure > 0:
-                target_exposure = req.strategic_exposure_scale * 1e9 # Convert B to absolute
+                target_exposure = req.strategic_exposure_scale * 1e9 
                 scale_factor = target_exposure / current_avg_exposure
                 W_dense *= scale_factor
-                # Also scale the interbank assets/liabs in DF to match, otherwise consistency checks fail?
-                # Actually, compute_state_variables derives obligations strictly from W_dense.
-                # But it derives 'total_assets' from DF.
-                # If we scale W up 10x, 'interbank_claims' go up 10x.
-                # 'external_assets' = total_assets - interbank_claims.
-                # If interbank_claims > total_assets, external_assets = 0.
-                # This simulates "leveraging up" the interbank book.
-                # To be chemically correct, we should arguably increase total_assets too?
-                # For now, let's just scale W and let the math flow.
-                # If exposure is huge, external assets will drain, making banks fragile. Correct.
-
         if req.topology_type == "uniform":
             total_volume = W_dense.sum()
             W_dense = _generate_max_entropy_topology(df, total_volume)
-
-        # Optional CCP
         if req.use_ccp:
             W_dense, df = sim.apply_central_clearing(
                 W_dense, df,
                 clearing_rate=req.clearing_rate,
                 default_fund_ratio=req.default_fund_ratio,
             )
-
         state = sim.compute_state_variables(W_dense, df)
-
-        # ── STRATEGIC A/B TESTING (Game/Strategic Mode) ───────────────────
         if req.use_strategic:
-            # 1. Run OPAQUE simulation (Private signals only)
             opaque_result = sim.run_strategic_intraday_simulation(
                 state, df.copy(),
                 trigger_idx=req.trigger_idx,
                 loss_severity=req.severity,
                 n_steps=req.n_steps,
-                uncertainty_sigma=req.strategic_noise_std, # Use explicit noise
-                alpha=req.strategic_haircut,               # Map Haircut -> Alpha (Fire sale decay)
+                uncertainty_sigma=req.strategic_noise_std, 
+                alpha=req.strategic_haircut,               
                 margin_sensitivity=req.strategic_margin_pressure,
                 max_iterations=req.max_iter,
                 convergence_threshold=req.tolerance,
@@ -592,19 +455,16 @@ async def run_simulation(req: SimulationRequest):
                 recovery_rate=req.strategic_recovery_rate,
                 risk_aversion_mean=req.strategic_risk_aversion,
                 info_regime="OPAQUE",
-                public_precision=None  # Default logic applies for OPAQUE
+                public_precision=None  
             )
             opaque_result["bank_names"] = df["bank_name"].tolist()
-
-            # 2. Run TRANSPARENT simulation (High-precision public signal)
-            # Use req.strategic_alpha for public_precision
             transparent_result = sim.run_strategic_intraday_simulation(
                 state, df.copy(),
                 trigger_idx=req.trigger_idx,
                 loss_severity=req.severity,
                 n_steps=req.n_steps,
-                uncertainty_sigma=req.strategic_noise_std, # Use explicit noise
-                alpha=req.strategic_haircut,               # Map Haircut -> Alpha
+                uncertainty_sigma=req.strategic_noise_std, 
+                alpha=req.strategic_haircut,               
                 margin_sensitivity=req.strategic_margin_pressure,
                 max_iterations=req.max_iter,
                 convergence_threshold=req.tolerance,
@@ -617,21 +477,14 @@ async def run_simulation(req: SimulationRequest):
                 public_precision=req.strategic_alpha
             )
             transparent_result["bank_names"] = df["bank_name"].tolist()
-
-            # 3. Calculate capital saved
-            # (Opaque Loss) - (Transparent Loss)
             capital_saved = opaque_result.get('equity_loss', 0.0) - transparent_result.get('equity_loss', 0.0)
-
-            # 4. Construct response
             run_id = str(uuid.uuid4())
-            
             result_data = {
                 "opaque": _clean_results(opaque_result),
                 "transparent": _clean_results(transparent_result),
                 "capital_saved": float(capital_saved),
                 "run_id": run_id
             }
-
             try:
                 summary = build_run_summary("game", result_data)
                 _llm_store.save_run(
@@ -644,10 +497,7 @@ async def run_simulation(req: SimulationRequest):
                 )
             except Exception:
                 logger.exception("Failed to store strategic run")
-
             return result_data
-
-        # ── MECHANICAL / STANDARD INTRADAY ───────────────────────────────
         if req.use_intraday:
             results = sim.run_rust_intraday(
                 state, df,
@@ -672,7 +522,6 @@ async def run_simulation(req: SimulationRequest):
                 convergence_threshold=req.tolerance,
                 distress_threshold=req.distress_threshold,
             )
-
         results["bank_names"] = df["bank_name"].tolist()
         cleaned = _clean_results(results)
         run_id = str(uuid.uuid4())
@@ -693,8 +542,6 @@ async def run_simulation(req: SimulationRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/climate")
 async def run_climate(req: ClimateRequest):
     """Run the Green Swan transition shock."""
@@ -702,9 +549,7 @@ async def run_climate(req: ClimateRequest):
         W_dense, df = _load_network()
         df = df.copy()
         assign_climate_exposure(df)
-
         state = sim.compute_state_variables(W_dense, df)
-
         results = run_transition_shock(
             state, df,
             carbon_tax_severity=req.carbon_tax,
@@ -713,7 +558,6 @@ async def run_climate(req: ClimateRequest):
             n_steps=req.n_steps,
             circuit_breaker_threshold=req.circuit_breaker_threshold if req.circuit_breaker_enabled else 0.0,
         )
-
         results["bank_names"] = df["bank_name"].tolist()
         cleaned = _clean_results(results)
         run_id = str(uuid.uuid4())
@@ -734,8 +578,6 @@ async def run_climate(req: ClimateRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/game")
 async def run_game(req: GameRequest):
     """Run Morris & Shin strategic game under both regimes."""
@@ -752,16 +594,12 @@ async def run_game(req: GameRequest):
             margin_volatility=req.margin_pressure,
             initial_exposure_per_bank=req.exposure,
         )
-
         results_opaque = run_game_simulation(info_regime="OPAQUE", **common)
         results_transparent = run_game_simulation(info_regime="TRANSPARENT", **common)
-
-        # Serialize agent names before _clean_results strips the agent objects
         for res in (results_opaque, results_transparent):
             res["agent_names"] = [
                 a.name for a in res.get("agents", [])
             ] or [f"Strategic Bank {i}" for i in range(req.n_banks)]
-
         cleaned = {
             "opaque": _clean_results(results_opaque),
             "transparent": _clean_results(results_transparent),
@@ -788,8 +626,6 @@ async def run_game(req: GameRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/gnn-risk")
 async def get_gnn_risk():
     """Return GNN risk scores for all banks."""
@@ -799,7 +635,6 @@ async def get_gnn_risk():
         W_dense, df = _load_network()
         model = load_trained_model(str(GNN_MODEL_PATH))
         result = predict_risk(model, W_dense, df)
-
         scores = []
         for i, row in df.iterrows():
             scores.append({
@@ -807,13 +642,10 @@ async def get_gnn_risk():
                 "name": str(row["bank_name"]),
                 "risk_score": float(result["risk_scores"][i]),
             })
-
         return {"scores": scores}
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/explain/run")
 async def explain_run(req: ExplainRunRequest):
     try:
@@ -824,7 +656,6 @@ async def explain_run(req: ExplainRunRequest):
         )
         if not stored:
             raise HTTPException(status_code=404, detail="Run not found")
-
         summary = stored.summary_json or build_run_summary(stored.run_type, stored.result_json)
         highlights = _extract_top_losses(stored.result_json, top_n=5)
         graph_evidence = build_graph_evidence(stored.result_json)
@@ -845,8 +676,6 @@ async def explain_run(req: ExplainRunRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/explain/bank")
 async def explain_bank(req: ExplainBankRequest):
     try:
@@ -855,24 +684,20 @@ async def explain_bank(req: ExplainBankRequest):
             bank_profile = _llm_store.find_bank_profile_by_name(req.bank_id)
         if not bank_profile:
             raise HTTPException(status_code=404, detail="Bank profile not found")
-
         all_banks = _llm_store.get_all_bank_profiles()
         risk_scores = [float(b.get("gnn_risk_score", 0) or 0) for b in all_banks]
         assets = [float(b.get("total_assets", 0) or 0) for b in all_banks]
         leverage = [float(b.get("leverage_ratio", 0) or 0) for b in all_banks]
-
         bank_percentiles = {
             "risk_score_pct": _percentile_rank(risk_scores, float(bank_profile.get("gnn_risk_score", 0) or 0)),
             "assets_pct": _percentile_rank(assets, float(bank_profile.get("total_assets", 0) or 0)),
             "leverage_pct": _percentile_rank(leverage, float(bank_profile.get("leverage_ratio", 0) or 0)),
         }
         peer_summary = _bank_peer_summary(all_banks, bank_profile)
-
         stored = _llm_store.get_run(req.run_id) if req.run_id else None
         run_type = stored.run_type if stored else None
         run_results = stored.result_json if stored else None
         bank_context = build_bank_context(bank_profile, run_type, run_results)
-
         evidence = {
             "bank_id": req.bank_id,
             "bank_context": bank_context,
@@ -888,8 +713,6 @@ async def explain_bank(req: ExplainBankRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     try:
@@ -903,10 +726,6 @@ async def chat(req: ChatRequest):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ── Run ───────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

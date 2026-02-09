@@ -8,7 +8,7 @@ warnings.filterwarnings('ignore')
 BASE_PATH = Path(__file__).parent / "data"
 OUTPUT_DIR = BASE_PATH / "output"
 EU_INTERBANK_RATIO = 0.15  
-US_INTERBANK_RATIO = 0.10  # Fixed: was 0.40, real-world is <10% for large banks
+US_INTERBANK_RATIO = 0.10  
 DERIV_MULTIPLIER = 1.5
 SUPER_CORE_COUNT = 30  
 CORE_PERCENTILE = 0.95  
@@ -131,7 +131,6 @@ def build_gravity_matrix(df: pd.DataFrame) -> sparse.csr_matrix:
                 distance = DISTANCE_SAME_REGION
             else:
                 distance = DISTANCE_CROSS_REGION
-            # Debtor demand (liab_i) × Creditor capacity (asset_j)
             weight = (liab_i * asset_j) / distance
             if weight > 0:
                 rows.append(i)
@@ -278,9 +277,7 @@ def analyze_connectivity(W: sparse.csr_matrix, df: pd.DataFrame):
     eu_systemic_weight = (eu_eu + eu_us) / total * 100
     print(f"  US Systemic Weight: {us_systemic_weight:.2f}%")
     print(f"  EU Systemic Weight: {eu_systemic_weight:.2f}%")
-   
 def main():
-    """Main execution pipeline."""
     print("\n" + "=" * 60)
     print("ENCS LAYER 2: TOPOLOGY RECONSTRUCTION")
     print("Interbank Network via Gravity Model + RAS")
@@ -288,7 +285,6 @@ def main():
     df = load_and_impute_exposures()
     df = classify_core_periphery(df)
     W = build_gravity_matrix(df)
-    # Row sums = outflows (liabilities), Col sums = inflows (assets)
     target_row = df['interbank_liabilities'].values
     target_col = df['interbank_assets'].values
     W_balanced = ras_balance(W, target_row, target_col)
