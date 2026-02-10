@@ -8,6 +8,10 @@ This project is a comprehensive toolkit for analyzing systemic risk in banking n
 
 ![Dashboard Preview](images/dashboard.png)
 
+## Project Demonstration
+Watch the entire demonstration of this project on YouTube:
+[https://youtu.be/uk9riC6LneA](https://youtu.be/uk9riC6LneA)
+
 ## Key Features & Deep Dive
 
 ### 1. High-Fidelity Contagion Simulation (Rust + Python)
